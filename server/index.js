@@ -1,31 +1,36 @@
-const express = require("express");
+const path = require("node:path");
 
-const app = express();
-const PORT = process.env.PORT || 5000;
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 
-// Middleware
-app.use(express.json());
+const useCompiledOutput = process.argv.includes("--compiled");
 
-// Test route
-app.get("/", (req, res) => {
-  res.json({
-    message: "Smart Recycling API is running!",
+if (!useCompiledOutput) {
+  require("tsx/cjs");
+}
+
+const appPath = useCompiledOutput ? "./dist/app" : "./src/app";
+const envPath = useCompiledOutput ? "./dist/config/env" : "./src/config/env";
+const { env } = require(envPath);
+
+if (!env.DATABASE_URL) {
+  throw new Error("DATABASE_URL must be set before starting the API.");
+}
+
+const { app } = require(appPath);
+
+const server = app.listen(env.PORT, () => {
+  console.log(`WasteWise API listening on port ${env.PORT}`);
+});
+
+function shutdown(signal) {
+  console.log(`${signal} received; closing the HTTP server.`);
+  server.close((error) => {
+    if (error) {
+      console.error("Failed to close the HTTP server cleanly.", error);
+      process.exitCode = 1;
+    }
   });
-});
+}
 
-// Example API route
-app.get("/api/locations", (req, res) => {
-  res.json([
-    {
-      id: 1,
-      name: "Pretoria Recycling Centre",
-      address: "Pretoria, South Africa",
-      materials: ["Plastic", "Paper", "Glass", "Metal"],
-    },
-  ]);
-});
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));

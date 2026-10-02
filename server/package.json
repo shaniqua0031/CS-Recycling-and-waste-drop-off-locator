@@ -4,17 +4,37 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "npm run api:build && node index.js --compiled",
+    "api:dev": "tsx watch index.js",
+    "api:build": "tsc -p tsconfig.json",
+    "api:start": "npm start",
+    "admin:create": "tsx src/scripts/create-admin.ts",
+    "test:api": "tsx --test src/**/*.test.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:seed": "tsx prisma/seed.ts"
   },
   "keywords": [],
   "type": "commonjs",
   "dependencies": {
+    "@prisma/client": "6.12.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
     "jsonwebtoken": "^9.0.3",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.5",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^24.10.0",
+    "prisma": "6.12.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
   }
 }
