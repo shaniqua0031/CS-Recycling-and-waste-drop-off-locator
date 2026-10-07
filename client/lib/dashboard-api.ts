@@ -22,6 +22,7 @@ export type CollectionRecord = {
   pickupAddress: string;
   pickupLatitude: number;
   pickupLongitude: number;
+  estimatedEtaMinutes?: number | null;
   status: ApiCollectionStatus;
   requester?: { email: string; recyclerProfile?: { displayName: string } | null };
   material: { id: string; name: string };
@@ -29,6 +30,7 @@ export type CollectionRecord = {
   assignments: Array<{
     id: string;
     status: string;
+    reason?: string | null;
     collector: {
       currentLatitude: number | null;
       currentLongitude: number | null;
@@ -62,6 +64,25 @@ export type RecyclerRewards = {
   pointsBalance: number;
   pointValueRand: number;
   rates: Array<{ material: string; pointsPerKg: number }>;
+  redemptions: Array<{
+    id: string;
+    reference: string;
+    type: "REWARD" | "ELECTRICITY";
+    pointsCost: number;
+    valueCents: number;
+    status: string;
+    meterNumberMasked: string | null;
+    createdAt: string;
+  }>;
+};
+
+export type UserNotification = {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  readAt: string | null;
+  createdAt: string;
 };
 
 export type AdminOverview = {
@@ -82,7 +103,7 @@ export type AdminOverview = {
 export type AdminUser = {
   id: string;
   email: string;
-  role: "RECYCLER" | "COLLECTOR" | "FACILITY";
+  role: "RECYCLER";
   status: "ACTIVE" | "SUSPENDED" | "PENDING_APPROVAL";
   displayName: string;
   collections: number;
@@ -161,11 +182,13 @@ export type MaterialRate = {
 export type AdminRedemption = {
   id: string;
   reference: string;
+  type: "REWARD" | "ELECTRICITY";
   pointsCost: number;
   valueCents: number;
   randValue: number;
   status: "REQUESTED" | "APPROVED" | "FULFILLED" | "REJECTED" | "CANCELLED";
   createdAt: string;
+  meterNumberMasked: string | null;
   user: { id: string; email: string; displayName: string };
 };
 
@@ -232,6 +255,10 @@ export function acceptCollection(requestId: string) {
   return apiRequest<CollectionRecord>(`/collections/${encodeURIComponent(requestId)}/accept`, { method: "POST" });
 }
 
+export function declineCollection(requestId: string, reason: string) {
+  return apiRequest<CollectionRecord>(`/collections/${encodeURIComponent(requestId)}/decline`, { method: "POST", body: JSON.stringify({ reason }) });
+}
+
 export function updateCollectorLocation(latitude: number, longitude: number) {
   return apiRequest<{ id: string; currentLatitude: number; currentLongitude: number; lastLocationUpdatedAt: string }>("/collections/location", { method: "PUT", body: JSON.stringify({ latitude, longitude }) });
 }
@@ -249,7 +276,15 @@ export function getRecyclerRewards() {
 }
 
 export function requestRewardRedemption(pointsCost: number) {
-  return apiRequest<{ id: string; reference: string; pointsCost: number; valueCents: number; randValue: number; status: string }>("/collections/rewards/redemptions", { method: "POST", body: JSON.stringify({ pointsCost }) });
+  return apiRequest<{ id: string; reference: string; type: "REWARD"; pointsCost: number; valueCents: number; randValue: number; status: string }>("/collections/rewards/redemptions", { method: "POST", body: JSON.stringify({ pointsCost }) });
+}
+
+export function requestElectricityRedemption(pointsCost: number, meterNumber: string) {
+  return apiRequest<{ id: string; reference: string; type: "ELECTRICITY"; pointsCost: number; valueCents: number; randValue: number; status: string }>("/collections/rewards/redemptions/electricity", { method: "POST", body: JSON.stringify({ pointsCost, meterNumber }) });
+}
+
+export function getUserNotifications() {
+  return apiRequest<UserNotification[]>("/collections/notifications");
 }
 
 export function createUserReport(input: {

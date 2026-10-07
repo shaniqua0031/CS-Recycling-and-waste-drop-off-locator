@@ -7,6 +7,7 @@ import {
   CollectionStatus,
   CollectorAvailability,
   Prisma,
+  RedemptionType,
   ReportType,
   RedemptionStatus,
   RewardTransactionType,
@@ -16,7 +17,8 @@ import { prisma } from "../../lib/prisma";
 import { requireAuthentication } from "../../middleware/authenticate";
 import { validateBody } from "../../middleware/validate-body";
 import { ApiError } from "../../utils/api-error";
-import { collectionRequestSchema, collectedWeightSchema, collectorLocationSchema, facilityProfileSchema, reportSubmissionSchema, verifiedWeightSchema } from "./collections.schemas";
+import { collectionRequestSchema, collectedWeightSchema, collectorDeclineSchema, collectorLocationSchema, electricityRedemptionSchema, facilityProfileSchema, reportSubmissionSchema, rewardRedemptionSchema, verifiedWeightSchema } from "./collections.schemas";
+import { distanceBetweenKm } from "../../utils/geo";
 
 export const collectionsRouter = Router();
 const activeAssignmentStatuses = [AssignmentStatus.ASSIGNED, AssignmentStatus.ACCEPTED];
@@ -150,7 +152,20 @@ collectionsRouter.get("/", asyncHandler(async (request, response) => {
   }
 
   const requests = await prisma.collectionRequest.findMany({ where, include: requestInclude(), orderBy: { createdAt: "desc" }, take: 200 });
-  response.json({ data: requests });
+  const now = Date.now();
+  response.json({ data: requests.map((collectionRequest) => {
+    const collector = collectionRequest.assignments[0]?.collector;
+    const locationUpdatedAt = collector?.lastLocationUpdatedAt?.getTime();
+    const hasRecentLocation = locationUpdatedAt !== undefined && now - locationUpdatedAt <= 30 * 60 * 1000;
+    const hasCoordinates = collector?.currentLatitude !== null && collector?.currentLatitude !== undefined && collector.currentLongitude !== null && collector.currentLongitude !== undefined;
+    const estimatedEtaMinutes = hasRecentLocation && hasCoordinates
+      ? Math.max(1, Math.ceil(distanceBetweenKm(
+        { latitude: collector.currentLatitude!, longitude: collector.currentLongitude! },
+        { latitude: collectionRequest.pickupLatitude, longitude: collectionRequest.pickupLongitude },
+      ) / 20 * 60))
+      : null;
+    return { ...collectionRequest, estimatedEtaMinutes };
+  }) });
 }));
 
 collectionsRouter.put("/location", validateBody(collectorLocationSchema), asyncHandler(async (request, response) => {
@@ -232,8 +247,16 @@ collectionsRouter.post("/:requestId/accept", asyncHandler(async (request, respon
       include: { request: true },
     });
     if (!assignment || assignment.request.status !== CollectionStatus.COLLECTOR_ASSIGNED) throw new ApiError(409, "ASSIGNMENT_NOT_AVAILABLE", "This request is not assigned to you or has already changed.");
-    await transaction.collectionAssignment.update({ where: { id: assignment.id }, data: { status: AssignmentStatus.ACCEPTED, acceptedAt: new Date() } });
-    await transaction.collectionRequest.update({ where: { id: requestId }, data: { status: CollectionStatus.COLLECTOR_ON_THE_WAY } });
+    const requestChanged = await transaction.collectionRequest.updateMany({
+      where: { id: requestId, status: CollectionStatus.COLLECTOR_ASSIGNED },
+      data: { status: CollectionStatus.COLLECTOR_ON_THE_WAY },
+    });
+    if (requestChanged.count !== 1) throw new ApiError(409, "ASSIGNMENT_NOT_AVAILABLE", "This request has already changed.");
+    const assignmentChanged = await transaction.collectionAssignment.updateMany({
+      where: { id: assignment.id, status: AssignmentStatus.ASSIGNED },
+      data: { status: AssignmentStatus.ACCEPTED, acceptedAt: new Date() },
+    });
+    if (assignmentChanged.count !== 1) throw new ApiError(409, "ASSIGNMENT_NOT_AVAILABLE", "This assignment has already changed.");
     await transaction.collectionStatusEvent.create({ data: {
       requestId,
       actorId: request.auth!.userId,
@@ -249,7 +272,62 @@ collectionsRouter.post("/:requestId/accept", asyncHandler(async (request, respon
       metadata: { requestId },
     } });
     return transaction.collectionRequest.findUniqueOrThrow({ where: { id: requestId }, include: requestInclude() });
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  response.json({ data: collectionRequest });
+}));
+
+collectionsRouter.post("/:requestId/decline", validateBody(collectorDeclineSchema), asyncHandler(async (request, response) => {
+  if (request.auth!.role !== UserRole.COLLECTOR) throw new ApiError(403, "FORBIDDEN", "Only the assigned Collector can decline a collection.");
+  const requestId = pathParam(request, "requestId");
+  const { reason } = collectorDeclineSchema.parse(request.body);
+  const profile = await prisma.collectorProfile.findUnique({ where: { userId: request.auth!.userId } });
+  if (!profile || profile.approvalStatus !== ApprovalStatus.APPROVED) throw new ApiError(403, "COLLECTOR_NOT_APPROVED", "Your collector account is not approved.");
+
+  const collectionRequest = await prisma.$transaction(async (transaction) => {
+    const assignment = await transaction.collectionAssignment.findFirst({
+      where: { requestId, collectorProfileId: profile.id, status: AssignmentStatus.ASSIGNED },
+      include: { request: true },
+    });
+    if (!assignment || assignment.request.status !== CollectionStatus.COLLECTOR_ASSIGNED) throw new ApiError(409, "ASSIGNMENT_NOT_AVAILABLE", "This request is not assigned to you or has already changed.");
+
+    const requestChanged = await transaction.collectionRequest.updateMany({
+      where: { id: requestId, status: CollectionStatus.COLLECTOR_ASSIGNED },
+      data: { status: CollectionStatus.WAITING_FOR_ADMIN },
+    });
+    if (requestChanged.count !== 1) throw new ApiError(409, "ASSIGNMENT_NOT_AVAILABLE", "This request has already changed.");
+    const assignmentChanged = await transaction.collectionAssignment.updateMany({
+      where: { id: assignment.id, status: AssignmentStatus.ASSIGNED },
+      data: { status: AssignmentStatus.DECLINED, reason },
+    });
+    if (assignmentChanged.count !== 1) throw new ApiError(409, "ASSIGNMENT_NOT_AVAILABLE", "This assignment has already changed.");
+    await transaction.collectorProfile.updateMany({
+      where: { id: profile.id, availability: CollectorAvailability.ON_COLLECTION },
+      data: { availability: CollectorAvailability.AVAILABLE },
+    });
+    await transaction.collectionStatusEvent.create({ data: {
+      requestId,
+      actorId: request.auth!.userId,
+      fromStatus: CollectionStatus.COLLECTOR_ASSIGNED,
+      toStatus: CollectionStatus.WAITING_FOR_ADMIN,
+      note: `Collector declined the assignment: ${reason}`,
+    } });
+    await transaction.notification.create({ data: {
+      userId: assignment.request.requesterId,
+      type: "COLLECTOR_DECLINED",
+      title: "Collector declined assignment",
+      body: `The assigned Collector declined: ${reason} The request is waiting for reassignment.`,
+      metadata: { requestId },
+    } });
+    const admins = await transaction.user.findMany({ where: { role: UserRole.ADMIN, status: AccountStatus.ACTIVE }, select: { id: true } });
+    if (admins.length) await transaction.notification.createMany({ data: admins.map(({ id }) => ({
+      userId: id,
+      type: "COLLECTOR_DECLINED",
+      title: "Collection needs reassignment",
+      body: `A Collector declined request ${requestId.slice(-8)}. Reason: ${reason}`,
+      metadata: { requestId },
+    })) });
+    return transaction.collectionRequest.findUniqueOrThrow({ where: { id: requestId }, include: requestInclude() });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   response.json({ data: collectionRequest });
 }));
 
@@ -371,15 +449,35 @@ collectionsRouter.post("/:requestId/verify", validateBody(verifiedWeightSchema),
 
 collectionsRouter.get("/rewards", asyncHandler(async (request, response) => {
   if (request.auth!.role !== UserRole.RECYCLER) throw new ApiError(403, "FORBIDDEN", "Only recyclers can view a personal rewards wallet.");
-  const [wallet, materials] = await Promise.all([
+  const [wallet, materials, redemptions] = await Promise.all([
     prisma.rewardWallet.findUnique({ where: { userId: request.auth!.userId } }),
     prisma.material.findMany({ where: { isActive: true }, include: { rewardRates: { where: { endsAt: null }, orderBy: { startsAt: "desc" }, take: 1 } }, orderBy: { name: "asc" } }),
+    prisma.rewardRedemption.findMany({ where: { wallet: { userId: request.auth!.userId } }, orderBy: { createdAt: "desc" }, take: 10 }),
   ]);
   response.json({ data: {
     pointsBalance: wallet?.pointsBalance ?? 0,
     pointValueRand: 0.2,
     rates: materials.map((material) => ({ material: material.name, pointsPerKg: material.rewardRates[0]?.pointsPerKg ?? 0 })),
+    redemptions: redemptions.map((redemption) => ({
+      id: redemption.id,
+      reference: redemption.reference,
+      type: redemption.type,
+      pointsCost: redemption.pointsCost,
+      valueCents: redemption.valueCents,
+      status: redemption.status,
+      meterNumberMasked: redemption.meterNumber ? `****${redemption.meterNumber.slice(-4)}` : null,
+      createdAt: redemption.createdAt,
+    })),
   } });
+}));
+
+collectionsRouter.get("/notifications", asyncHandler(async (request, response) => {
+  const notifications = await prisma.notification.findMany({
+    where: { userId: request.auth!.userId },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
+  response.json({ data: notifications });
 }));
 
 collectionsRouter.post("/reports", validateBody(reportSubmissionSchema), asyncHandler(async (request, response) => {
@@ -415,11 +513,7 @@ collectionsRouter.post("/reports", validateBody(reportSubmissionSchema), asyncHa
   response.status(201).json({ data: report });
 }));
 
-collectionsRouter.post("/rewards/redemptions", asyncHandler(async (request, response) => {
-  if (request.auth!.role !== UserRole.RECYCLER) throw new ApiError(403, "FORBIDDEN", "Only recyclers can request a reward redemption.");
-  const input = request.body as { pointsCost?: unknown };
-  if (!Number.isInteger(input.pointsCost) || Number(input.pointsCost) < 1 || Number(input.pointsCost) > 100000) throw new ApiError(400, "VALIDATION_ERROR", "pointsCost must be a positive integer.");
-  const pointsCost = Number(input.pointsCost);
+async function createRedemption(request: Request, pointsCost: number, type: RedemptionType, meterNumber?: string) {
   const reference = `WW-${randomUUID().slice(0, 8).toUpperCase()}`;
   const redemption = await prisma.$transaction(async (transaction) => {
     const wallet = await transaction.rewardWallet.findUnique({ where: { userId: request.auth!.userId } });
@@ -427,7 +521,7 @@ collectionsRouter.post("/rewards/redemptions", asyncHandler(async (request, resp
     const changed = await transaction.rewardWallet.updateMany({ where: { id: wallet.id, pointsBalance: { gte: pointsCost } }, data: { pointsBalance: { decrement: pointsCost } } });
     if (changed.count !== 1) throw new ApiError(409, "INSUFFICIENT_POINTS", "There are not enough points for this redemption.");
     const valueCents = pointsCost * 20;
-    const created = await transaction.rewardRedemption.create({ data: { walletId: wallet.id, reference, pointsCost, valueCents } });
+    const created = await transaction.rewardRedemption.create({ data: { walletId: wallet.id, reference, type, meterNumber, pointsCost, valueCents } });
     await transaction.rewardTransaction.create({ data: {
       walletId: wallet.id,
       redemptionId: created.id,
@@ -440,7 +534,7 @@ collectionsRouter.post("/rewards/redemptions", asyncHandler(async (request, resp
     await transaction.notification.create({ data: {
       userId: request.auth!.userId,
       type: "REWARD_REDEEMED",
-      title: "Redemption requested",
+      title: type === RedemptionType.ELECTRICITY ? "Electricity request submitted" : "Redemption requested",
       body: `${pointsCost} points (R${(valueCents / 100).toFixed(2)}) are awaiting Admin review.`,
       metadata: { redemptionId: created.id },
     } });
@@ -448,13 +542,35 @@ collectionsRouter.post("/rewards/redemptions", asyncHandler(async (request, resp
     if (admins.length) await transaction.notification.createMany({ data: admins.map(({ id }) => ({
       userId: id,
       type: "REWARD_REDEEMED",
-      title: "Reward redemption requested",
-      body: `${request.auth!.displayName ?? request.auth!.email} requested a ${pointsCost}-point redemption.`,
+      title: type === RedemptionType.ELECTRICITY ? "Electricity redemption requested" : "Reward redemption requested",
+      body: `${request.auth!.displayName ?? request.auth!.email} requested a ${pointsCost}-point ${type === RedemptionType.ELECTRICITY ? "electricity" : "reward"} redemption.`,
       metadata: { redemptionId: created.id },
     })) });
     return created;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-  response.status(201).json({ data: { ...redemption, randValue: redemption.valueCents / 100 } });
+  return {
+    id: redemption.id,
+    reference: redemption.reference,
+    type: redemption.type,
+    pointsCost: redemption.pointsCost,
+    valueCents: redemption.valueCents,
+    randValue: redemption.valueCents / 100,
+    status: redemption.status,
+  };
+}
+
+collectionsRouter.post("/rewards/redemptions", validateBody(rewardRedemptionSchema), asyncHandler(async (request, response) => {
+  if (request.auth!.role !== UserRole.RECYCLER) throw new ApiError(403, "FORBIDDEN", "Only recyclers can request a reward redemption.");
+  const input = rewardRedemptionSchema.parse(request.body);
+  const redemption = await createRedemption(request, input.pointsCost, RedemptionType.REWARD);
+  response.status(201).json({ data: redemption });
+}));
+
+collectionsRouter.post("/rewards/redemptions/electricity", validateBody(electricityRedemptionSchema), asyncHandler(async (request, response) => {
+  if (request.auth!.role !== UserRole.RECYCLER) throw new ApiError(403, "FORBIDDEN", "Only recyclers can request an electricity redemption.");
+  const input = electricityRedemptionSchema.parse(request.body);
+  const redemption = await createRedemption(request, input.pointsCost, RedemptionType.ELECTRICITY, input.meterNumber);
+  response.status(201).json({ data: redemption });
 }));
 
 export const collectionsRouterProtected = collectionsRouter;

@@ -85,7 +85,6 @@ function requestInclude() {
     material: true,
     destinationFacility: true,
     assignments: {
-      where: { status: { in: activeAssignmentStatuses } },
       include: { collector: { include: { user: { include: { recyclerProfile: true } } } } },
       orderBy: { assignedAt: "desc" as const },
     },
@@ -187,7 +186,7 @@ adminRouter.get("/users", asyncHandler(async (request, response) => {
   const search = typeof request.query.search === "string" ? request.query.search.trim() : "";
   const users = await prisma.user.findMany({
     where: {
-      role: { not: UserRole.ADMIN },
+      role: UserRole.RECYCLER,
       ...(search ? { OR: [
         { email: { contains: search, mode: "insensitive" } },
         { recyclerProfile: { displayName: { contains: search, mode: "insensitive" } } },
@@ -482,7 +481,14 @@ adminRouter.get("/redemptions", asyncHandler(async (_request, response) => {
     take: 200,
   });
   response.json({ data: redemptions.map((redemption) => ({
-    ...redemption,
+    id: redemption.id,
+    reference: redemption.reference,
+    type: redemption.type,
+    pointsCost: redemption.pointsCost,
+    valueCents: redemption.valueCents,
+    status: redemption.status,
+    createdAt: redemption.createdAt,
+    meterNumberMasked: redemption.meterNumber ? `****${redemption.meterNumber.slice(-4)}` : null,
     user: {
       id: redemption.wallet.user.id,
       email: redemption.wallet.user.email,

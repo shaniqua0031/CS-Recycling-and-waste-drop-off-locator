@@ -14,6 +14,18 @@ export const collectedWeightSchema = z.object({
   actualKg: z.number().positive().max(100000),
 }).strict();
 
+export const collectorDeclineSchema = z.object({
+  reason: z.string().trim().min(5).max(500),
+}).strict();
+
+export const rewardRedemptionSchema = z.object({
+  pointsCost: z.number().int().min(1).max(100000),
+}).strict();
+
+export const electricityRedemptionSchema = rewardRedemptionSchema.extend({
+  meterNumber: z.string().trim().min(6).max(32).regex(/^[A-Za-z0-9-]+$/),
+}).strict();
+
 export const verifiedWeightSchema = z.object({
   verifiedKg: z.number().positive().max(100000),
 }).strict();

@@ -75,9 +75,15 @@ enum RedemptionStatus {
   CANCELLED
 }
 
+enum RedemptionType {
+  REWARD
+  ELECTRICITY
+}
+
 enum NotificationType {
   COLLECTION_REQUEST_CREATED
   COLLECTOR_ASSIGNED
+  COLLECTOR_DECLINED
   COLLECTOR_ON_THE_WAY
   COLLECTOR_ARRIVED
   COLLECTION_COMPLETED
@@ -373,6 +379,8 @@ model RewardRedemption {
   id           String            @id @default(cuid())
   walletId     String
   reference    String            @unique
+  type         RedemptionType    @default(REWARD)
+  meterNumber  String?
   pointsCost   Int
   valueCents   Int
   status       RedemptionStatus  @default(REQUESTED)

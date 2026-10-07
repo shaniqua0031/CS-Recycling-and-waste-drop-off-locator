@@ -9,15 +9,20 @@ import {
   acceptCollection as acceptCollectionApi,
   createUserReport,
   createCollectionRequest as createCollectionRequestApi,
+  declineCollection as declineCollectionApi,
   getCollectionRequests,
   getFacilityProfile,
   getRecyclerRewards,
+  getUserNotifications,
   recordCollectedWeight,
+  requestElectricityRedemption,
   requestRewardRedemption,
   saveFacilityProfile as saveFacilityProfileApi,
   updateCollectorLocation,
   verifyCollectedWeight,
   type CollectionRecord,
+  type RecyclerRewards,
+  type UserNotification,
 } from "../lib/dashboard-api";
 import {
   CollectionRequestScreen,
@@ -49,12 +54,18 @@ function toWorkflowCollection(record: CollectionRecord): CollectionRequest {
     recyclerName: record.requester?.recyclerProfile?.displayName ?? record.requester?.email ?? "Recycler",
     material: record.material.name,
     pickupAddress: record.pickupAddress,
+    pickupLatitude: record.pickupLatitude,
+    pickupLongitude: record.pickupLongitude,
     estimatedWeightKg: Number(record.weight?.estimatedKg ?? record.estimatedKg),
     preferredDate: record.requestedFor,
     status,
     collectorId: assignment?.collector.user.id,
     collectorName: assignment?.collector.user.recyclerProfile?.displayName ?? assignment?.collector.user.email,
-    collectorAccepted: record.status !== "COLLECTOR_ASSIGNED" && assignment !== undefined,
+    collectorAccepted: assignment?.status === "ACCEPTED",
+    collectorLatitude: assignment?.collector.currentLatitude,
+    collectorLongitude: assignment?.collector.currentLongitude,
+    collectorLocationUpdatedAt: assignment?.collector.lastLocationUpdatedAt,
+    estimatedEtaMinutes: record.estimatedEtaMinutes ?? null,
     collectedWeightKg: record.weight?.actualKg === null || record.weight?.actualKg === undefined ? undefined : Number(record.weight.actualKg),
     verifiedWeightKg: record.weight?.verifiedKg === null || record.weight?.verifiedKg === undefined ? undefined : Number(record.weight.verifiedKg),
   };
@@ -1226,6 +1237,8 @@ export default function Home() {
   const [facilityProfiles, setFacilityProfiles] = useState<Record<string, FacilityProfile>>({});
   const [pointsBalance, setPointsBalance] = useState(0);
   const [rewardRates, setRewardRates] = useState<Array<{ material: string; pointsPerKg: number }>>([]);
+  const [rewardRedemptions, setRewardRedemptions] = useState<RecyclerRewards["redemptions"]>([]);
+  const [userNotifications, setUserNotifications] = useState<UserNotification[]>([]);
   const [findInitialQuery, setFindInitialQuery] = useState("");
   const [findInitialMaterial, setFindInitialMaterial] = useState("All materials");
   const savedLocations = locations.filter((location) => savedLocationNames.includes(location.name));
@@ -1233,15 +1246,18 @@ export default function Home() {
 
   const refreshRoleWorkflow = async (userId: string, role: UserRole) => {
     if (role === "ADMIN") return;
-    const records = await getCollectionRequests();
+    const [records, notifications] = await Promise.all([getCollectionRequests(), getUserNotifications()]);
     setCollectionRequests(records.map(toWorkflowCollection));
+    setUserNotifications(notifications);
     if (role === "RECYCLER") {
       const rewards = await getRecyclerRewards();
       setPointsBalance(rewards.pointsBalance);
       setRewardRates(rewards.rates);
+      setRewardRedemptions(rewards.redemptions);
     } else {
       setPointsBalance(0);
       setRewardRates([]);
+      setRewardRedemptions([]);
     }
     if (role === "FACILITY") {
       const profile = await getFacilityProfile();
@@ -1390,6 +1406,12 @@ export default function Home() {
     await refreshRoleWorkflow(currentUser.id, currentUser.role);
   };
 
+  const declineCollectionRequest = async (requestId: string, reason: string) => {
+    if (!currentUser || currentUser.role !== "COLLECTOR") throw new Error("Sign in with an approved Collector account to decline assignments.");
+    await declineCollectionApi(requestId, reason);
+    await refreshRoleWorkflow(currentUser.id, currentUser.role);
+  };
+
   const recordCollectedMaterial = async (requestId: string, collectedWeightKg: number) => {
     if (!currentUser || currentUser.role !== "COLLECTOR" || !Number.isFinite(collectedWeightKg) || collectedWeightKg <= 0) throw new Error("Enter a valid collected quantity.");
     await recordCollectedWeight(requestId, collectedWeightKg);
@@ -1422,6 +1444,12 @@ export default function Home() {
   const redeemReward = async (cost: number) => {
     if (!currentUser || currentUser.role !== "RECYCLER") throw new Error("Only Recycler accounts can request a reward redemption.");
     await requestRewardRedemption(cost);
+    await refreshRoleWorkflow(currentUser.id, currentUser.role);
+  };
+
+  const redeemElectricity = async (cost: number, meterNumber: string) => {
+    if (!currentUser || currentUser.role !== "RECYCLER") throw new Error("Only Recycler accounts can request an electricity redemption.");
+    await requestElectricityRedemption(cost, meterNumber);
     await refreshRoleWorkflow(currentUser.id, currentUser.role);
   };
 
@@ -1518,9 +1546,9 @@ export default function Home() {
       {isAuthenticated && screen === "saved" && <SavedScreen locations={savedLocations} onSelect={goToDetails} />}
       {isAuthenticated && screen === "report" && <ReportScreen onBack={() => goToMap()} location={selectedLocation} />}
       {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "collection-request" && <CollectionRequestScreen onBack={goToDashboard} onCreate={createCollectionRequest} />}
-      {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "tracking" && <TrackingScreen requests={collectionRequests.filter((request) => request.recyclerId === currentUser.id)} points={pointsBalance} rates={rewardRates} onBack={goToDashboard} onRewards={() => setScreen("rewards")} />}
-      {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "rewards" && <RewardsScreen points={pointsBalance} rates={rewardRates} onBack={goToDashboard} onRedeem={redeemReward} />}
-      {isAuthenticated && currentUser?.role === "COLLECTOR" && screen === "collector-board" && <CollectorBoardScreen requests={collectionRequests.filter((request) => request.status === "Assigned")} onBack={goToDashboard} onAccept={acceptCollectionRequest} />}
+      {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "tracking" && <TrackingScreen requests={collectionRequests.filter((request) => request.recyclerId === currentUser.id)} points={pointsBalance} rates={rewardRates} notifications={userNotifications} onBack={goToDashboard} onRewards={() => setScreen("rewards")} onRefresh={() => refreshRoleWorkflow(currentUser.id, currentUser.role)} />}
+      {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "rewards" && <RewardsScreen points={pointsBalance} rates={rewardRates} redemptions={rewardRedemptions} onBack={goToDashboard} onRedeem={redeemReward} onElectricityRedeem={redeemElectricity} />}
+      {isAuthenticated && currentUser?.role === "COLLECTOR" && screen === "collector-board" && <CollectorBoardScreen requests={collectionRequests.filter((request) => request.status === "Assigned")} onBack={goToDashboard} onAccept={acceptCollectionRequest} onDecline={declineCollectionRequest} />}
       {isAuthenticated && currentUser?.role === "COLLECTOR" && screen === "collector-pickups" && <CollectorPickupsScreen requests={collectionRequests.filter((request) => request.collectorId === currentUser.id)} onBack={goToDashboard} onRecordCollection={recordCollectedMaterial} onUpdateLocation={updateCollectorCurrentLocation} />}
       {isAuthenticated && currentUser?.role === "FACILITY" && screen === "facility-profile" && <FacilityProfileScreen profile={facilityProfile} onBack={goToDashboard} onSave={saveFacilityProfile} />}
       {isAuthenticated && currentUser?.role === "FACILITY" && screen === "facility-verification" && <FacilityVerificationScreen requests={collectionRequests} profile={facilityProfile} onBack={goToDashboard} onVerify={verifyReceivedMaterial} />}

@@ -56,6 +56,43 @@ export default function AdminCollectionsMap({ requests }: { requests: Collection
   );
 }
 
+export function CollectionTrackingMap({ request }: { request: {
+  pickupLatitude: number;
+  pickupLongitude: number;
+  pickupAddress: string;
+  material: string;
+  collectorLatitude?: number | null;
+  collectorLongitude?: number | null;
+  collectorLocationUpdatedAt?: string | null;
+  collectorName?: string;
+} }) {
+  const pickupPosition: [number, number] = [request.pickupLatitude, request.pickupLongitude];
+  const hasCollectorLocation = request.collectorLatitude !== null && request.collectorLatitude !== undefined && request.collectorLongitude !== null && request.collectorLongitude !== undefined;
+  const collectorPosition: [number, number] | null = hasCollectorLocation
+    ? [request.collectorLatitude!, request.collectorLongitude!]
+    : null;
+
+  return (
+    <div className="mt-3 h-[280px] w-full overflow-hidden rounded-lg border border-gray-200">
+      <MapContainer center={collectorPosition ?? pickupPosition} zoom={10} minZoom={6} scrollWheelZoom={false} className="h-full w-full">
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        <CircleMarker center={pickupPosition} radius={9} pathOptions={{ color: "#b45309", fillColor: "#f59e0b", fillOpacity: 0.95 }}>
+          <Popup><strong>{request.material} pickup</strong><br />{request.pickupAddress}</Popup>
+        </CircleMarker>
+        {collectorPosition && <>
+          <Polyline positions={[pickupPosition, collectorPosition]} pathOptions={{ color: "#0f766e", dashArray: "5 6" }} />
+          <CircleMarker center={collectorPosition} radius={8} pathOptions={{ color: "#0f766e", fillColor: "#14b8a6", fillOpacity: 0.9 }}>
+            <Popup><strong>{request.collectorName ?? "Assigned Collector"}</strong><br />Last-known location<br />{request.collectorLocationUpdatedAt ? new Date(request.collectorLocationUpdatedAt).toLocaleString() : "Update time unavailable"}</Popup>
+          </CircleMarker>
+        </>}
+      </MapContainer>
+    </div>
+  );
+}
+
 export function AdminAssignmentMap({ request, candidates }: { request: CollectionRecord; candidates: CollectorCandidate[] }) {
   return (
     <div className="mb-4 h-[280px] w-full overflow-hidden rounded-lg border border-gray-200">
