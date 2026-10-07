@@ -41,6 +41,39 @@ test("unknown API routes return the shared error envelope", async () => {
   }
 });
 
+test("Vercel frontend origin is allowed for credentialed auth requests", async () => {
+  const server = app.listen(0);
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const origin = "https://cs-recycling-and-waste-drop-off-loc.vercel.app";
+
+  try {
+    const preflight = await fetch(`http://127.0.0.1:${address.port}/api/v1/auth/session`, {
+      method: "OPTIONS",
+      headers: {
+        origin,
+        "access-control-request-method": "GET",
+        "access-control-request-headers": "content-type",
+      },
+    });
+
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), origin);
+    assert.equal(preflight.headers.get("access-control-allow-credentials"), "true");
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/auth/logout`, {
+      method: "POST",
+      headers: { origin },
+    });
+
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get("access-control-allow-origin"), origin);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("registration rejects a client-supplied privileged role before database access", async () => {
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));

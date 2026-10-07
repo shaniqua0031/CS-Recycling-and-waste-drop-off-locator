@@ -35,7 +35,10 @@ function getApiBaseUrl(): string {
     if (process.env.NODE_ENV === "production" && parsedUrl.protocol !== "https:") {
       throw new AuthApiError("The configured API URL must use HTTPS in production.", 0, "INVALID_API_URL");
     }
-    return configuredUrl.replace(/\/+$/, "");
+    if (parsedUrl.pathname === "/") {
+      parsedUrl.pathname = "/api/v1";
+    }
+    return parsedUrl.toString().replace(/\/+$/, "");
   }
 
   if (process.env.NODE_ENV !== "production") {

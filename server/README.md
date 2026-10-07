@@ -4,7 +4,7 @@ The HTTP server has a single entry point: `index.js`. It starts the Express app 
 
 ## Deployment environment
 
-Set `CLIENT_ORIGINS` in the API hosting provider to the exact deployed frontend origin or comma-separated frontend origins (for example, `https://<frontend-host>`). Keep this allowlist restricted to trusted origins; credentialed browser requests are only permitted from configured origins.
+For Render, set `CLIENT_ORIGINS` to `https://cs-recycling-and-waste-drop-off-loc.vercel.app` (add other trusted origins as comma-separated values). If unset, the built-in allowlist includes this Vercel origin and the local development origins. Keep the allowlist restricted to trusted origins; credentialed browser requests are only permitted from configured origins.
 
 The frontend separately requires `NEXT_PUBLIC_API_BASE_URL` set to this API's public base URL ending in `/api/v1` before its build/deployment. Since Next.js embeds this public variable at build time, redeploy the frontend after changing it.
 
