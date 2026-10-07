@@ -10,11 +10,44 @@ export type AuthUser = {
 type ApiEnvelope<T> = { data: T };
 type ApiErrorEnvelope = { error?: { code?: string; message?: string } };
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? (
-  typeof window === "undefined"
-    ? "http://localhost:5000/api/v1"
-    : `http://${window.location.hostname}:5000/api/v1`
-);
+function getApiBaseUrl(): string {
+  const configuredUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim()
+    || process.env.NEXT_PUBLIC_API_URL?.trim();
+
+  if (configuredUrl) {
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(configuredUrl);
+    } catch {
+      if (process.env.NODE_ENV !== "production") {
+        return "http://localhost:5000/api/v1";
+      }
+      throw new AuthApiError("The configured API URL must be an absolute HTTP(S) URL.", 0, "INVALID_API_URL");
+    }
+
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      if (process.env.NODE_ENV !== "production") {
+        return "http://localhost:5000/api/v1";
+      }
+      throw new AuthApiError("The configured API URL must use HTTP or HTTPS.", 0, "INVALID_API_URL");
+    }
+
+    if (process.env.NODE_ENV === "production" && parsedUrl.protocol !== "https:") {
+      throw new AuthApiError("The configured API URL must use HTTPS in production.", 0, "INVALID_API_URL");
+    }
+    return configuredUrl.replace(/\/+$/, "");
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    return "http://localhost:5000/api/v1";
+  }
+
+  throw new AuthApiError(
+    "The API URL is not configured. Set NEXT_PUBLIC_API_BASE_URL to your public API URL and redeploy the frontend.",
+    0,
+    "API_NOT_CONFIGURED",
+  );
+}
 
 export class AuthApiError extends Error {
   constructor(message: string, readonly statusCode: number, readonly code?: string) {
@@ -24,6 +57,7 @@ export class AuthApiError extends Error {
 }
 
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const apiBaseUrl = getApiBaseUrl();
   let response: Response;
   try {
     response = await fetch(`${apiBaseUrl}${path}`, {

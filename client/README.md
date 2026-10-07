@@ -30,6 +30,9 @@ To learn more about Next.js, take a look at the following resources:
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
 ## Deploy on Vercel
+Set `NEXT_PUBLIC_API_BASE_URL` in the frontend hosting provider to the public API base URL, including `/api/v1` (for example, `https://<api-host>/api/v1`). `NEXT_PUBLIC_API_URL` is also accepted for compatibility with existing local setups, but use `NEXT_PUBLIC_API_BASE_URL` for new deployments.
+
+This variable is embedded in the browser bundle at build time. Set it before deploying and redeploy the frontend whenever it changes. The API server must also allow the exact frontend origin in its `CLIENT_ORIGINS` setting.
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
