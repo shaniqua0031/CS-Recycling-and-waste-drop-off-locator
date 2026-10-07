@@ -6,7 +6,7 @@
   "scripts": {
     "start": "npm run api:build && node index.js --compiled",
     "api:dev": "tsx watch index.js",
-    "api:build": "tsc -p tsconfig.json",
+    "api:build": "npm run prisma:generate && tsc -p tsconfig.json",
     "api:start": "npm start",
     "admin:create": "tsx src/scripts/create-admin.ts",
     "test:api": "tsx --test src/**/*.test.ts",
