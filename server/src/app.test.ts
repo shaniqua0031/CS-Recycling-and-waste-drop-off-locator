@@ -75,6 +75,57 @@ test("Vercel frontend origin is allowed for credentialed auth requests", async (
   }
 });
 
+test("ReLoop Vercel production and preview origins are allowed for credentialed requests", async () => {
+  const server = app.listen(0);
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const origins = [
+    "https://cs-recycling-and-waste-drop-off-locator.vercel.app",
+    "https://cs-recycling-and-waste-drop-off-locator-jclyuxq6y.vercel.app",
+    "https://cs-recycling-and-waste-drop-off-locator-feature-branch.vercel.app",
+  ];
+
+  try {
+    for (const origin of origins) {
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/auth/session`, {
+        method: "OPTIONS",
+        headers: {
+          origin,
+          "access-control-request-method": "GET",
+          "access-control-request-headers": "content-type,authorization",
+        },
+      });
+      assert.equal(response.status, 204, origin);
+      assert.equal(response.headers.get("access-control-allow-origin"), origin);
+      assert.equal(response.headers.get("access-control-allow-credentials"), "true");
+      assert.match(response.headers.get("access-control-allow-headers") ?? "", /Content-Type/i);
+      assert.match(response.headers.get("access-control-allow-headers") ?? "", /Authorization/i);
+      assert.match(response.headers.get("access-control-allow-methods") ?? "", /OPTIONS/);
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("unrelated Vercel origins do not receive credentialed CORS headers", async () => {
+  const server = app.listen(0);
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/auth/session`, {
+      method: "OPTIONS",
+      headers: { origin: "https://unrelated-project.vercel.app", "access-control-request-method": "GET" },
+    });
+    assert.equal(response.headers.get("access-control-allow-origin"), null);
+    assert.equal(response.headers.get("access-control-allow-credentials"), null);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("alternate local Next.js dev port is allowed for credentialed requests", async () => {
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));

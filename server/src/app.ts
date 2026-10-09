@@ -1,6 +1,6 @@
-import cors from "cors";
+import cors, { type CorsOptions } from "cors";
 import express from "express";
-import { env } from "./config/env";
+import { isTrustedClientOrigin } from "./config/env";
 import { errorHandler } from "./middleware/error-handler";
 import { authRouter } from "./features/auth/auth.routes";
 import { adminRouterProtected } from "./features/admin/admin.routes";
@@ -11,7 +11,15 @@ import { usersRouter } from "./routes/users";
 export const app = express();
 
 app.disable("x-powered-by");
-app.use(cors({ origin: env.CLIENT_ORIGINS, credentials: true }));
+const corsOptions: CorsOptions = {
+  origin(origin, callback) {
+    callback(null, isTrustedClientOrigin(origin));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+app.use(cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/admin", adminRouterProtected);
