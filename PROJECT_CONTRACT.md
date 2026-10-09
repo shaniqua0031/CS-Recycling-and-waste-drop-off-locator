@@ -55,13 +55,43 @@ WasteWise will provide users with a clear and accessible way to:
 
 The project will be considered successful when:
 
-- users can sign in or sign up
-- users can search for nearby drop-off points by location and material
-- a user can view a facility’s accepted materials and hours
-- the map and detail views feel useful and intuitive
-- the reporting flow is available for incorrect or missing data
-- the app is polished enough to act as a realistic MVP prototype
 
+### API contracts and verification
+
+The Express API is mounted under `/api/v1`.
+
+### Collection and collector routes
+
+- `GET /collections` — authenticated Recycler requests, Collector-owned assignments/history, or Facility destination requests, scoped by role and signed-in user/membership.
+- `POST /collections` — Recycler creates a request. The server creates it in `WAITING_FOR_ADMIN` and dispatches it to the closest qualified available collector, with request priority and active workload as ranking inputs. Admin assignment remains available when no automatic candidate is eligible.
+- `POST /collections/:requestId/cancel` — the requesting Recycler may cancel before collection starts. Active assignment records are revoked and affected users/Admin are notified.
+- `GET /collections/collector/dashboard` — Collector-only profile, qualifications, owned jobs/history, metrics, and notifications.
+- `PUT /collections/collector/profile` — Collector-only availability (`AVAILABLE`, `ON_COLLECTION`, `OFFLINE`, `UNAVAILABLE`) and active material qualification updates. `ON_COLLECTION` is the persisted `BUSY` state; assignment and job completion may also update it server-side.
+- `POST /collections/:requestId/accept` — assigned Collector accepts; transition and notifications are recorded atomically.
+- `POST /collections/:requestId/decline` — assigned Collector declines with `reasonCode` (`VEHICLE_FULL`, `TOO_FAR`, `UNAVAILABLE`, `MATERIAL_UNSUPPORTED`, `SAFETY_ISSUE`, `OTHER`) and optional `explanation`; the server attempts reassignment.
+- `POST /collections/:requestId/progress` — assigned Collector transitions via `ARRIVED`, `START`, `PAUSE`, or `RESUME`. `PAUSE` requires a delay code (`VEHICLE_PROBLEM`, `SAFETY_ISSUE`, `SORTING_DELAY`, `CUSTOMER_DELAY`, `OTHER`).
+- `POST /collections/:requestId/collect` — assigned Collector records either legacy `actualKg` or material lines (`materials: [{ materialId, actualKg }]`) and optional notes. Collection must be `COLLECTING`; each category must be active and accepted by the destination facility. The request moves to facility verification.
+- `POST /collections/:requestId/verify` — authorized Facility member verifies legacy `verifiedKg` or per-material values (`materials: [{ materialId, verifiedKg }]`). Existing idempotent reward calculation remains tied to facility verification.
+- `GET /collections/notifications` and `POST /collections/notifications/:notificationId/read` — personal Recycler/Collector notifications, always scoped to the authenticated user.
+
+### Admin route
+
+- `PATCH /admin/requests/:requestId/priority` — Admin-only priority update (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`) requiring a reason; recorded in collection status history and Admin audit, with notifications to the requester and current collector.
+- `POST /admin/requests/:requestId/assign` — Admin-only assignment or reassignment while a request is waiting or assigned but not accepted; eligibility is revalidated transactionally and assignment history/audit are recorded.
+- `POST /admin/requests/:requestId/cancel` — Admin-only cancellation requiring a reason; active assignments are revoked, collectors released, and status history, notifications, and audit are recorded.
+- `GET /admin/incidents` — Admin-only active incident list with linked reports, community verification, explainable score factors, and assigned Collector.
+- `PATCH /admin/incidents/:incidentId/priority`, `/assignment`, and `/status` — Admin-only incident override (reason required), Collector assignment, and resolve/reopen actions with audit history.
+- `GET /admin/analytics/30-days` — Admin-only rolling persisted 30-day operations and recycling analytics.
+- `GET|POST /admin/maintenance-windows` and `PATCH /admin/maintenance-windows/:windowId/overrun` — Admin-only facility service schedules, request dispatch blocking, and overrun controls. The server worker processes windows and grace periods.
+- `GET /admin/sensors`, `POST /admin/sensors/spike`, and `POST /admin/sensors/reset` — Admin-only short-lived facility telemetry. Sensor events do not create or dispatch collection requests.
+- `GET /admin/simulator/events` and `POST /admin/simulator/actions` — Admin-only persisted simulator operations. Simulator reset only reverses records linked to simulator events; ordinary user records are not deleted.
+- `POST /admin/collectors/:profileId/messages` — Admin-only personal message to one Collector; delivery creates a Collector notification and Admin audit entry.
+
+Collectors cannot access Admin routes or another Collector's profile/jobs/notifications. Recycler-facing collection responses redact exact Collector coordinates; Collector dashboard coordinates are returned only to that authenticated Collector. Polling remains client-side at a three-second interval without page reloads.
+
+Facility-condition reports notify only collectors with active assignments for the affected facility.
+
+The simulator is an Admin-only demonstration service, not a physical sensor integration. Sensor events are simulated, short-lived telemetry records. There is no proof-photo storage integration. The collection completion notification says “Your waste has been cleared,” but the app does not claim that a physical sensor or photo upload was completed.
 ## 7. Delivery principles
 
 - keep the experience simple and intuitive

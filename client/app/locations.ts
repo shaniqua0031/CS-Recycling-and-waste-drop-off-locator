@@ -1,4 +1,5 @@
 export type Location = {
+  facilityId?: string;
   name: string;
   shortAddress: string;
   fullAddress: string;
@@ -9,6 +10,7 @@ export type Location = {
   phone: string;
   email: string;
   distance: string;
+  distanceKm?: number | null;
   directions: string;
   image: string;
   latitude: number;

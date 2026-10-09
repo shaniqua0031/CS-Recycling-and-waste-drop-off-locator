@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { app } from "./app";
+import { getSessionCookieOptions } from "./features/auth/auth.security";
 
 test("health endpoint returns the versioned API envelope", async () => {
   const server = app.listen(0);
@@ -74,6 +75,26 @@ test("Vercel frontend origin is allowed for credentialed auth requests", async (
   }
 });
 
+test("alternate local Next.js dev port is allowed for credentialed requests", async () => {
+  const server = app.listen(0);
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const origin = "http://localhost:3001";
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/auth/session`, {
+      method: "OPTIONS",
+      headers: { origin, "access-control-request-method": "GET" },
+    });
+    assert.equal(response.status, 204);
+    assert.equal(response.headers.get("access-control-allow-origin"), origin);
+    assert.equal(response.headers.get("access-control-allow-credentials"), "true");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("registration rejects a client-supplied privileged role before database access", async () => {
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -133,6 +154,15 @@ test("session endpoint requires authentication", async () => {
   }
 });
 
+test("production cookies use secure cross-site settings", () => {
+  const cookieOptions = getSessionCookieOptions({ isProduction: true, maxAge: 60_000 });
+
+  assert.equal(cookieOptions.secure, true);
+  assert.equal(cookieOptions.sameSite, "none");
+  assert.equal(cookieOptions.path, "/");
+  assert.equal(cookieOptions.maxAge, 60_000);
+});
+
 test("registration and login succeed with session cookie", async () => {
   const email = `sharon-${randomUUID()}@example.com`;
   const server = app.listen(0);
@@ -178,6 +208,30 @@ test("registration and login succeed with session cookie", async () => {
     assert.equal(loginRes.status, 200);
     const loginBody = await loginRes.json() as { data: { user: { email: string } } };
     assert.equal(loginBody.data.user.email, email);
+
+    const roleBoundaryRequests = [
+      fetch(`http://127.0.0.1:${address.port}/api/v1/admin/audit`, { headers: { cookie: cookieHeader } }),
+      fetch(`http://127.0.0.1:${address.port}/api/v1/collections/location`, {
+        method: "PUT",
+        headers: { cookie: cookieHeader, "content-type": "application/json" },
+        body: JSON.stringify({ latitude: -26.2, longitude: 28 }),
+      }),
+      fetch(`http://127.0.0.1:${address.port}/api/v1/collections/facility-profile`, { headers: { cookie: cookieHeader } }),
+      fetch(`http://127.0.0.1:${address.port}/api/v1/collections/facility/dashboard`, { headers: { cookie: cookieHeader } }),
+      fetch(`http://127.0.0.1:${address.port}/api/v1/collections/facility/notifications?facilityId=facility-1`, { headers: { cookie: cookieHeader } }),
+      fetch(`http://127.0.0.1:${address.port}/api/v1/collections/facility/incidents`, {
+        method: "POST",
+        headers: { cookie: cookieHeader, "content-type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({ facilityId: "facility-1", type: "EQUIPMENT_ISSUE", description: "The sorting conveyor belt has stopped working." }),
+      }),
+      fetch(`http://127.0.0.1:${address.port}/api/v1/collections/facility/status`, {
+        method: "PATCH",
+        headers: { cookie: cookieHeader, "content-type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({ facilityId: "facility-1", status: "OPEN" }),
+      }),
+    ];
+    const roleBoundaryResponses = await Promise.all(roleBoundaryRequests);
+    assert.deepEqual(roleBoundaryResponses.map((response) => response.status), [403, 403, 403, 403, 403, 403, 403]);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

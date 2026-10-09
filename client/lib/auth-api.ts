@@ -25,6 +25,8 @@ function getApiBaseUrl(): string {
       throw new AuthApiError("The configured API URL must be an absolute HTTP(S) URL.", 0, "INVALID_API_URL");
     }
 
+    const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(parsedUrl.hostname);
+
     if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
       if (process.env.NODE_ENV !== "production") {
         return "http://localhost:5000/api/v1";
@@ -32,7 +34,7 @@ function getApiBaseUrl(): string {
       throw new AuthApiError("The configured API URL must use HTTP or HTTPS.", 0, "INVALID_API_URL");
     }
 
-    if (process.env.NODE_ENV === "production" && parsedUrl.protocol !== "https:") {
+    if (process.env.NODE_ENV === "production" && !isLocalHost && parsedUrl.protocol !== "https:") {
       throw new AuthApiError("The configured API URL must use HTTPS in production.", 0, "INVALID_API_URL");
     }
     if (parsedUrl.pathname === "/") {

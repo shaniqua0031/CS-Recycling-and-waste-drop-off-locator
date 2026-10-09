@@ -1,55 +1,82 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { locations, materials, type Location } from "./locations";
 import { AuthApiError, getSession, login, logout, registerRecycler, type RegistrationInput, type UserRole } from "../lib/auth-api";
 import {
   acceptCollection as acceptCollectionApi,
+  changeRecyclerPassword,
+  cancelCollection,
+  createBufferedCollectionEvent,
   createUserReport,
   createCollectionRequest as createCollectionRequestApi,
+  getAvailableFacilities,
+  getBufferedCollectionEvents,
   declineCollection as declineCollectionApi,
   getCollectionRequests,
-  getFacilityProfile,
+  getCollectorDashboard,
+  getFacilityOperations,
+  getRecyclerProfile,
   getRecyclerRewards,
+  getRecyclerSummary,
+  markUserNotificationRead,
+  markFacilityNotificationRead,
+  redeemReward as redeemRewardApi,
+  resolveBufferedCollectionEvent,
+  searchAvailableFacilities,
   getUserNotifications,
   recordCollectedWeight,
   requestElectricityRedemption,
-  requestRewardRedemption,
   saveFacilityProfile as saveFacilityProfileApi,
+  updateFacilityCapacity,
+  updateFacilityStatus,
+  createFacilityIncident,
+  receiveFacilityCollection,
+  rejectFacilityCollection,
+  updateCollectionProgress,
+  updateRecyclerProfile,
   updateCollectorLocation,
+  updateCollectorProfile,
   verifyCollectedWeight,
   type CollectionRecord,
+  type CollectorDashboard,
+  type AvailableFacility,
+  type BufferedCollectionEvent,
+  type RecyclerProfileRecord,
   type RecyclerRewards,
+  type RecyclerSummary,
   type UserNotification,
+  type FacilityOperationsDashboard,
 } from "../lib/dashboard-api";
 import {
   CollectionRequestScreen,
   CollectorBoardScreen,
+  CollectorDashboardScreen,
+  CollectorHistoryScreen,
   CollectorPickupsScreen,
   FacilityProfileScreen,
+  FacilityOperationsScreen,
   FacilityVerificationScreen,
   RewardsScreen,
+  RecyclerProfileScreen,
   TrackingScreen,
   type CollectionRequest,
   type FacilityProfile,
+  type FacilityProfileSaveInput,
 } from "./workflow-screens";
-type Screen = "auth" | "dashboard" | "admin" | "find" | "map" | "details" | "saved" | "report" | "collection-request" | "tracking" | "rewards" | "collector-board" | "collector-pickups" | "facility-profile" | "facility-verification";
+import { toWorkflowStatus } from "../lib/collection-workflow";
+type Screen = "auth" | "dashboard" | "admin" | "find" | "map" | "details" | "saved" | "report" | "collection-request" | "tracking" | "rewards" | "profile" | "collector-board" | "collector-pickups" | "collector-history" | "facility-profile" | "facility-verification";
 type AuthMode = "login" | "signup";
 type AuthSubmission = Omit<RegistrationInput, "displayName"> & { displayName?: string };
 
 function toWorkflowCollection(record: CollectionRecord): CollectionRequest {
-  const status = record.status === "VERIFIED" || record.status === "COMPLETED"
-    ? "Verified"
-    : record.status === "COLLECTED" || record.status === "VERIFICATION_PENDING"
-      ? "Collected"
-      : record.status === "WAITING_FOR_ADMIN" || record.status === "PENDING"
-        ? "Pending"
-        : "Assigned";
+  const status = toWorkflowStatus(record.status);
   const assignment = record.assignments[0];
   return {
     id: record.id,
+    materialId: record.material.id,
     recyclerId: record.requesterId,
     recyclerName: record.requester?.recyclerProfile?.displayName ?? record.requester?.email ?? "Recycler",
     material: record.material.name,
@@ -57,17 +84,59 @@ function toWorkflowCollection(record: CollectionRecord): CollectionRequest {
     pickupLatitude: record.pickupLatitude,
     pickupLongitude: record.pickupLongitude,
     estimatedWeightKg: Number(record.weight?.estimatedKg ?? record.estimatedKg),
+    priority: record.priority ?? "MEDIUM",
+    createdAt: record.createdAt,
+    distanceKm: record.distanceKm ?? null,
     preferredDate: record.requestedFor,
     status,
     collectorId: assignment?.collector.user.id,
     collectorName: assignment?.collector.user.recyclerProfile?.displayName ?? assignment?.collector.user.email,
     collectorAccepted: assignment?.status === "ACCEPTED",
+    assignmentStatus: assignment?.status,
+    assignedAt: assignment?.assignedAt,
+    declineReasonCode: assignment?.declineReasonCode ?? null,
     collectorLatitude: assignment?.collector.currentLatitude,
     collectorLongitude: assignment?.collector.currentLongitude,
     collectorLocationUpdatedAt: assignment?.collector.lastLocationUpdatedAt,
     estimatedEtaMinutes: record.estimatedEtaMinutes ?? null,
     collectedWeightKg: record.weight?.actualKg === null || record.weight?.actualKg === undefined ? undefined : Number(record.weight.actualKg),
     verifiedWeightKg: record.weight?.verifiedKg === null || record.weight?.verifiedKg === undefined ? undefined : Number(record.weight.verifiedKg),
+    materialWeights: (record.materialWeights ?? []).map((item) => ({
+      materialId: item.materialId,
+      material: item.material.name,
+      actualKg: Number(item.actualKg),
+      verifiedKg: item.verifiedKg === null ? null : Number(item.verifiedKg),
+    })),
+    statusEvents: record.statusEvents.map((event) => ({ toStatus: event.toStatus, createdAt: event.createdAt, note: event.note })),
+  };
+}
+
+function toLocation(facility: AvailableFacility): Location {
+  const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  const todayIndex = (new Date().getDay() + 6) % 7;
+  const today = facility.openingHours.find((hour) => hour.dayOfWeek === todayIndex);
+  const hours = dayNames.map((day, index) => {
+    const entry = facility.openingHours.find((hour) => hour.dayOfWeek === index);
+    return !entry || entry.isClosed ? `${day} Closed` : `${day} ${entry.opensAt ?? ""} - ${entry.closesAt ?? ""}`;
+  });
+  const distance = facility.distanceKm === null ? "Distance unavailable" : `${facility.distanceKm.toFixed(1)} km`;
+  return {
+    facilityId: facility.id,
+    name: facility.name,
+    shortAddress: `${facility.address}${facility.distanceKm === null ? "" : ` · ${distance}`}`,
+    fullAddress: facility.address,
+    accepted: facility.acceptedMaterials,
+    status: facility.status === "OPEN" ? "Open" : "Closed",
+    openUntil: today?.closesAt ?? "",
+    hours,
+    phone: facility.phone ?? "",
+    email: facility.email ?? "",
+    distance,
+    distanceKm: facility.distanceKm,
+    directions: "Directions",
+    image: "",
+    latitude: facility.latitude,
+    longitude: facility.longitude,
   };
 }
 
@@ -95,6 +164,7 @@ function BottomNav({ active, role, onNavigate }: { active: Screen; role: UserRol
     { label: "Home", screen: "dashboard", icon: "🏠" },
     { label: "Requests", screen: "collector-board", icon: "📋" },
     { label: "Pickups", screen: "collector-pickups", icon: "🚚" },
+    { label: "History", screen: "collector-history", icon: "◷" },
   ] : role === "FACILITY" ? [
     { label: "Home", screen: "dashboard", icon: "🏠" },
     { label: "Facility", screen: "facility-profile", icon: "🏭" },
@@ -104,6 +174,7 @@ function BottomNav({ active, role, onNavigate }: { active: Screen; role: UserRol
     { label: "Find", screen: "find", icon: "🔍" },
     { label: "Map", screen: "map", icon: "🗺️" },
     { label: "Saved", screen: "saved", icon: "🔖" },
+    { label: "Profile", screen: "profile", icon: "👤" },
   ];
 
   return (
@@ -552,6 +623,8 @@ function AuthScreen({
 function DashboardScreen({
   displayName,
   role,
+  summary,
+  facilities,
   onSearch,
   onOpenFind,
   onOpenMap,
@@ -559,9 +632,12 @@ function DashboardScreen({
   onSelectMaterial,
   onOpenDirections,
   onRoleAction,
+  onOpenProfile,
 }: {
   displayName: string;
   role: UserRole;
+  summary: RecyclerSummary | null;
+  facilities: Location[];
   onSearch: (query: string) => void;
   onOpenFind: () => void;
   onOpenMap: (location: Location) => void;
@@ -569,6 +645,7 @@ function DashboardScreen({
   onSelectMaterial: (material: string) => void;
   onOpenDirections: (location: Location) => void;
   onRoleAction: (action: string) => void;
+  onOpenProfile: () => void;
 }) {
   const [search, setSearch] = useState("");
   const greetingName = displayName || "there";
@@ -588,6 +665,7 @@ function DashboardScreen({
     "Request collection",
     "Track collections",
     "Earn points and redeem rewards",
+    "Manage profile",
   ];
 
   return (
@@ -597,10 +675,22 @@ function DashboardScreen({
           <p className="mb-1 text-sm font-medium text-green-100">Hello, {greetingName}</p>
           <h1 className="max-w-[400px] font-display text-2xl font-extrabold leading-tight text-white">{roleHeading}</h1>
         </div>
-        <button onClick={() => onOpenMap(locations[0])} aria-label="Open the map" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-green-500 text-xl text-white transition-colors hover:bg-green-400">
+        <button onClick={() => facilities[0] ? onOpenMap(facilities[0]) : onOpenFind()} aria-label="Open the map" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-green-500 text-xl text-white transition-colors hover:bg-green-400">
           <MapPinIcon />
         </button>
       </div>
+
+      {role === "RECYCLER" && <section aria-label="Recycling overview" className="mt-5 space-y-3 px-4">
+        <div className="grid grid-cols-2 gap-2">
+          <article className="rounded-lg border border-gray-200 bg-white p-3"><p className="text-xs text-gray-500">Total recycled</p><p className="mt-1 font-display text-xl font-extrabold text-gray-900">{summary ? `${summary.totalRecycledKg.toFixed(1)} kg` : "—"}</p></article>
+          <article className="rounded-lg border border-gray-200 bg-white p-3"><p className="text-xs text-gray-500">Reward points</p><p className="mt-1 font-display text-xl font-extrabold text-gray-900">{summary?.pointsBalance.toLocaleString() ?? "—"}</p></article>
+          <article className="rounded-lg border border-gray-200 bg-white p-3"><p className="text-xs text-gray-500">Completed collections</p><p className="mt-1 font-display text-xl font-extrabold text-gray-900">{summary?.completedCollections ?? "—"}</p></article>
+          <article className="rounded-lg border border-gray-200 bg-white p-3"><p className="text-xs text-gray-500">Pending requests</p><p className="mt-1 font-display text-xl font-extrabold text-gray-900">{summary?.pendingRequests ?? "—"}</p></article>
+        </div>
+        {summary?.activeRequest && <button type="button" onClick={() => onRoleAction("Track collections")} className="w-full rounded-lg border border-blue-200 bg-blue-50 p-3 text-left"><p className="text-xs font-semibold uppercase text-blue-800">Active collection · {summary.activeRequest.material}</p><p className="mt-1 text-sm font-bold text-blue-950">{summary.activeRequest.status === "COLLECTOR_ON_THE_WAY" ? "Collector is on the way" : summary.activeRequest.status.replaceAll("_", " ").toLowerCase()}</p><p className="mt-1 truncate text-xs text-blue-900">{summary.activeRequest.pickupAddress}</p></button>}
+        {summary && summary.impactByMaterial.length > 0 && <section className="border-t border-gray-200 pt-3"><h2 className="font-display text-sm font-bold text-gray-900">Recycling impact</h2><div className="mt-2 flex flex-wrap gap-2">{summary.impactByMaterial.map((item) => <span key={item.material} className="rounded-md bg-green-50 px-2.5 py-1.5 text-xs font-semibold text-green-900">{item.material}: {item.verifiedKg.toFixed(1)} kg</span>)}</div></section>}
+        {summary?.recentNotifications.map((notification) => <div key={notification.id} className={`border-l-2 py-1 pl-3 ${notification.readAt ? "border-gray-300" : "border-green-600"}`}><p className="text-xs font-semibold text-gray-800">{notification.title}</p><p className="text-xs text-gray-600">{notification.body}</p></div>)}
+      </section>}
 
       {role === "RECYCLER" && <div className="relative mx-4 -mt-4 flex items-center gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
         <div className="flex h-8 w-8 items-center justify-center text-[#1b7a61]">
@@ -631,7 +721,7 @@ function DashboardScreen({
           return (
           <button
             key={item}
-            onClick={() => role === "RECYCLER" ? (item.includes("points") ? onSelectMaterial("Plastic") : onRoleAction(item)) : onRoleAction(item)}
+            onClick={() => item === "Manage profile" ? onOpenProfile() : role === "RECYCLER" ? (item.includes("points") ? onSelectMaterial("Plastic") : onRoleAction(item)) : onRoleAction(item)}
             className={`rounded-xl border p-3 text-center transition-shadow hover:shadow-sm ${categoryColors[index]}`}
           >
             <span aria-hidden="true" className="mb-1 block text-2xl">{categoryIcons[index]}</span>
@@ -672,7 +762,7 @@ function DashboardScreen({
         </div>
 
       <div className="flex flex-col gap-3">
-        {locations.map((item) => (
+        {facilities.slice(0, 3).map((item) => (
           <article key={item.name} className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
             <div className="mb-3 flex items-start justify-between gap-2">
               <button onClick={() => onSelectLocation(item)} className="text-left font-display text-base font-bold leading-snug text-gray-900 hover:underline">{item.name}</button>
@@ -703,6 +793,7 @@ function DashboardScreen({
             </div>
           </article>
         ))}
+        {facilities.length === 0 && <p className="rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-600">No approved facilities are available yet.</p>}
       </div>
 
       </section>}
@@ -711,15 +802,21 @@ function DashboardScreen({
 }
 
 function FindScreen({
+  facilities,
   onBack,
   onSelect,
   onMap,
+  onDirections,
+  onRequest,
   initialQuery,
   initialMaterial,
 }: {
+  facilities: Location[];
   onBack: () => void;
   onSelect: (location: Location) => void;
   onMap: () => void;
+  onDirections: (location: Location) => void;
+  onRequest: (location: Location) => void;
   initialQuery: string;
   initialMaterial: string;
 }) {
@@ -727,24 +824,66 @@ function FindScreen({
   const [materialFilter, setMaterialFilter] = useState(initialMaterial);
   const [distanceLimit, setDistanceLimit] = useState(5);
   const [hoursFilter, setHoursFilter] = useState("Any time");
-  const filteredLocations = locations.filter((location) => {
-    const searchText = `${location.name} ${location.shortAddress} ${location.accepted.join(" ")}`.toLowerCase();
-    const matchesQuery = searchText.includes(query.trim().toLowerCase());
+  const [searchResults, setSearchResults] = useState<Location[]>(facilities);
+  const [searchLatitude, setSearchLatitude] = useState<number>();
+  const [searchLongitude, setSearchLongitude] = useState<number>();
+  const [searchError, setSearchError] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setIsSearching(true);
+      void searchAvailableFacilities({
+        query,
+        material: materialFilter,
+        latitude: searchLatitude,
+        longitude: searchLongitude,
+        ...(searchLatitude !== undefined ? { maxDistanceKm: distanceLimit } : {}),
+        ...(hoursFilter === "Open now" ? { openNow: true } : {}),
+      }).then((results) => {
+        if (!active) return;
+        setSearchResults(results.map(toLocation));
+        setSearchError("");
+      }).catch((caught: unknown) => {
+        if (active) setSearchError(caught instanceof Error ? caught.message : "Could not search facilities.");
+      }).finally(() => {
+        if (active) setIsSearching(false);
+      });
+    }, 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [query, materialFilter, distanceLimit, hoursFilter, searchLatitude, searchLongitude]);
+
+  const filteredLocations = searchResults.filter((location) => {
     const matchesMaterial = materialFilter === "All materials" || location.accepted.includes(materialFilter);
-    const matchesDistance = Number.parseFloat(location.distance) <= distanceLimit;
+    const matchesDistance = searchLatitude === undefined || location.distanceKm === null || location.distanceKm === undefined || location.distanceKm <= distanceLimit;
     const matchesHours =
       hoursFilter === "Any time" ||
       (hoursFilter === "Open now" && location.status === "Open") ||
       (hoursFilter === "Open weekends" && location.hours[5] !== "Saturday Closed");
 
-    return matchesQuery && matchesMaterial && matchesDistance && matchesHours;
+    return matchesMaterial && matchesDistance && matchesHours;
   });
+
+  const useSearchLocation = () => {
+    if (!navigator.geolocation) {
+      setSearchError("This browser cannot provide your location. Distance filtering is unavailable.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(({ coords }) => {
+      setSearchLatitude(coords.latitude);
+      setSearchLongitude(coords.longitude);
+      setSearchError("");
+    }, () => setSearchError("Location permission was unavailable. Facility distance will remain unavailable."), { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+  };
 
   const resetFilters = () => {
     setQuery("");
     setMaterialFilter("All materials");
     setDistanceLimit(5);
     setHoursFilter("Any time");
+    setSearchLatitude(undefined);
+    setSearchLongitude(undefined);
   };
 
   return (
@@ -756,7 +895,7 @@ function FindScreen({
             <h1 className="min-w-0 flex-1 truncate font-display text-lg font-bold text-gray-900">{query || "Find drop-off points"}</h1>
           </div>
         </div>
-        <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+          <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
         <div className="flex h-7 w-7 items-center justify-center text-green-600">
           <MapPinIcon />
         </div>
@@ -802,6 +941,8 @@ function FindScreen({
 
             <div>
               <h4 className="mb-3 text-[14px] font-semibold text-[#1a3d35]">Distance range</h4>
+              <button type="button" onClick={useSearchLocation} className="mb-2 text-xs font-semibold text-green-800 underline">{searchLatitude === undefined ? "Use my location" : "Location enabled"}</button>
+              {searchLatitude === undefined && <p className="mb-2 text-xs text-gray-500">Distance is unavailable until you share your location.</p>}
               <div className="space-y-2 text-[14px] text-[#38554d]">
                 {[
                   "Within 5 km",
@@ -849,11 +990,14 @@ function FindScreen({
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-display text-sm font-bold text-gray-900">{filteredLocations.length} results found</h2>
-            <span className="text-xs text-gray-500">Nearest first</span>
+            <span className="text-xs text-gray-500">{searchLatitude === undefined ? "Approved facilities" : "Nearest first"}</span>
           </div>
+          {searchError && <p role="alert" className="text-sm text-rose-700">{searchError}</p>}
+          {isSearching && <p role="status" className="text-xs text-gray-500">Searching approved facilities…</p>}
 
           {filteredLocations.map((item) => (
-            <button key={item.name} onClick={() => onSelect(item)} className="block w-full rounded-2xl border border-gray-100 bg-white p-4 text-left shadow-sm transition-shadow hover:shadow-md">
+            <article key={item.facilityId ?? item.name} className="rounded-xl border border-gray-200 bg-white p-4">
+              <button type="button" onClick={() => onSelect(item)} className="block w-full text-left">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h3 className="font-display text-base font-bold leading-snug text-gray-900">{item.name}</h3>
@@ -876,10 +1020,13 @@ function FindScreen({
                   </span>
                 </div>
               </div>
-              <div className="mt-4 flex items-center justify-end text-[#1f6d5a] font-medium">
-                View details →
+              </button>
+              <div className="mt-3 grid grid-cols-3 gap-2 border-t border-gray-100 pt-3 text-center">
+                <button type="button" onClick={() => onSelect(item)} className="text-xs font-semibold text-green-800">View details</button>
+                <button type="button" onClick={() => onDirections(item)} className="text-xs font-semibold text-green-800">Get directions</button>
+                <button type="button" onClick={() => onRequest(item)} className="text-xs font-semibold text-green-800">Request collection</button>
               </div>
-            </button>
+            </article>
           ))}
           {filteredLocations.length === 0 && (
             <div className="rounded-2xl border border-gray-100 bg-white p-8 text-center">
@@ -896,30 +1043,36 @@ function FindScreen({
 }
 
 function MapScreen({
+  facilities,
   location,
   onBack,
   onOpenDetails,
   onReport,
   onSelectLocation,
+  onDirections,
+  onRequest,
 }: {
+  facilities: Location[];
   location: Location;
   onBack: () => void;
   onOpenDetails: () => void;
   onReport: () => void;
   onSelectLocation: (location: Location) => void;
+  onDirections: (location: Location) => void;
+  onRequest: (location: Location) => void;
 }) {
   return (
     <main className="min-h-[calc(100vh-58px)] bg-gray-50 px-4 pb-24 pt-4">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
         <div className="flex items-center gap-2 text-sm text-[#3a544d]">
           <MapPinIcon />
-          <span>Johannesburg, South Africa · {locations.length} locations</span>
+          <span>Approved drop-off points · {facilities.length} locations</span>
         </div>
         <button onClick={onBack} className="text-sm font-medium text-[#1f6d5a] hover:underline">Back to results</button>
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white p-2 shadow-sm">
-        <SouthAfricaMap locations={locations} selectedLocation={location} onSelectLocation={onSelectLocation} />
+        {facilities.length > 0 ? <SouthAfricaMap locations={facilities} selectedLocation={location} onSelectLocation={onSelectLocation} /> : <p className="grid h-[420px] place-items-center text-sm text-gray-600">No approved facilities are available on the map.</p>}
       </div>
 
       <section className="mt-4 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
@@ -935,15 +1088,17 @@ function MapScreen({
         </div>
         <div className="mt-4 flex gap-2">
           <button onClick={onOpenDetails} className="flex-1 rounded-xl border border-green-200 py-2.5 text-sm font-semibold text-green-700 hover:bg-green-50">View details</button>
-          <button onClick={onReport} className="flex-1 rounded-xl bg-green-600 py-2.5 text-sm font-semibold text-white hover:bg-green-700">Report a problem</button>
+          <button onClick={() => onDirections(location)} className="flex-1 rounded-xl border border-green-200 py-2.5 text-sm font-semibold text-green-700 hover:bg-green-50">Directions</button>
+          <button onClick={() => onRequest(location)} className="flex-1 rounded-xl bg-green-700 py-2.5 text-sm font-semibold text-white hover:bg-green-800">Request</button>
         </div>
+        <button onClick={onReport} className="mt-3 text-sm font-semibold text-rose-800 underline">Report a problem</button>
       </section>
 
       <section className="mt-5" aria-labelledby="map-locations-heading">
         <h2 id="map-locations-heading" className="mb-3 font-display text-base font-bold text-gray-900">Nearby facilities</h2>
         <div className="flex flex-col gap-2">
-          {locations.map((item) => (
-            <button key={item.name} onClick={() => onSelectLocation(item)} aria-pressed={location.name === item.name} className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left ${location.name === item.name ? "border-green-300 bg-green-50" : "border-gray-100 bg-white"}`}>
+          {facilities.map((item) => (
+            <button key={item.facilityId ?? item.name} onClick={() => onSelectLocation(item)} aria-pressed={location.name === item.name} className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left ${location.name === item.name ? "border-green-300 bg-green-50" : "border-gray-100 bg-white"}`}>
               <span className="min-w-0">
                 <span className="block truncate text-sm font-semibold text-gray-800">{item.name}</span>
                 <span className="mt-0.5 block truncate text-xs text-gray-500">{item.shortAddress}</span>
@@ -961,23 +1116,21 @@ function DetailsScreen({
   location,
   onBack,
   onDirections,
+  onRequest,
   isSaved,
   onToggleSave,
 }: {
   location: Location;
   onBack: () => void;
   onDirections: () => void;
+  onRequest: (location: Location) => void;
   isSaved: boolean;
   onToggleSave: () => void;
 }) {
   return (
     <main className="min-h-[calc(100vh-58px)] bg-gray-50 pb-28">
-      <div
-        role="img"
-        aria-label={`${location.name} facility photo`}
-        className="relative h-56 bg-cover bg-center"
-        style={{ backgroundImage: `linear-gradient(to top, rgba(17,24,39,.45), transparent 65%), url('${location.image}')` }}
-      >
+      <div className="relative grid h-40 place-items-center bg-green-800 px-5 text-center text-white">
+        <div><p className="text-xs font-semibold uppercase text-green-100">Approved drop-off point</p><h1 className="mt-2 font-display text-2xl font-extrabold">{location.name}</h1></div>
         <button onClick={onBack} aria-label="Back to results" className="absolute left-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/95 text-lg text-gray-700 shadow-md">←</button>
         <button onClick={onToggleSave} aria-label={isSaved ? "Remove saved location" : "Save location"} aria-pressed={isSaved} className={`absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full text-lg shadow-md ${isSaved ? "bg-green-600 text-white" : "bg-white/95 text-gray-600"}`}>
           {isSaved ? "▣" : "▱"}
@@ -987,7 +1140,6 @@ function DetailsScreen({
       <section className="border-b border-gray-100 bg-white px-6 py-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="font-display text-xl font-extrabold leading-snug text-gray-900">{location.name}</h1>
             <p className="mt-1 flex items-start gap-2 text-sm text-gray-500"><MapPinIcon /><span>{location.fullAddress}</span></p>
           </div>
           <span className="shrink-0 text-sm font-semibold text-green-700">{location.distance}</span>
@@ -1000,8 +1152,9 @@ function DetailsScreen({
       <section className="mt-3 border-y border-gray-100 bg-white px-6 py-5">
         <h2 className="mb-4 font-display text-base font-bold text-gray-800">Contact information</h2>
         <div className="flex flex-col gap-3 text-sm text-gray-700">
-          <a href={`tel:${location.phone.replace(/[^+\d]/g, "")}`} className="flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-green-50 text-green-700"><PhoneIcon /></span>{location.phone}</a>
-          <a href={`mailto:${location.email}`} className="flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-green-50 text-green-700"><EnvelopeIcon /></span>{location.email}</a>
+          {location.phone && <a href={`tel:${location.phone.replace(/[^+\d]/g, "")}`} className="flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-green-50 text-green-700"><PhoneIcon /></span>{location.phone}</a>}
+          {location.email && <a href={`mailto:${location.email}`} className="flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-green-50 text-green-700"><EnvelopeIcon /></span>{location.email}</a>}
+          {!location.phone && !location.email && <p className="text-sm text-gray-500">Contact details are not available.</p>}
         </div>
       </section>
 
@@ -1027,18 +1180,11 @@ function DetailsScreen({
         </div>
       </section>
 
-      <section className="mx-4 mt-4 h-44 overflow-hidden rounded-2xl border border-gray-100 bg-[#dff0e4]" aria-label="Map preview">
-        <div className="relative h-full">
-          <div className="absolute left-4 top-10 h-28 w-28 rounded-full border-[10px] border-white/90" />
-          <div className="absolute left-24 top-4 h-28 w-40 rounded-[40%] border-[10px] border-white/90" />
-          <div className="absolute right-16 top-12 h-24 w-28 rounded-full border-[10px] border-white/90" />
-          <span className="absolute left-1/2 top-1/2 flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-green-600 text-white shadow-lg"><BrandIcon /></span>
-        </div>
-      </section>
+      <section className="border-y border-gray-100 bg-white px-6 py-5"><p className="text-sm text-gray-600">Facility coordinates</p><p className="mt-1 text-sm font-semibold text-gray-900">{location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}</p></section>
 
-      <div className="fixed bottom-0 left-1/2 z-40 flex w-full max-w-2xl -translate-x-1/2 gap-3 border-t border-gray-100 bg-white px-5 py-3">
-        <button onClick={onDirections} className="flex-1 rounded-xl bg-green-600 py-3.5 font-display text-sm font-bold text-white transition-colors hover:bg-green-700">Get directions</button>
-        <a href={`tel:${location.phone.replace(/[^+\d]/g, "")}`} className="flex-1 rounded-xl border border-gray-200 py-3.5 text-center font-display text-sm font-bold text-gray-700">Call</a>
+      <div className="fixed bottom-0 left-1/2 z-40 grid w-full max-w-2xl -translate-x-1/2 grid-cols-2 gap-2 border-t border-gray-100 bg-white px-4 py-3">
+        <button onClick={onDirections} className="rounded-lg border border-green-700 py-3 font-display text-sm font-bold text-green-800">Get directions</button>
+        <button onClick={() => onRequest(location)} className="rounded-lg bg-green-700 py-3 font-display text-sm font-bold text-white">Request collection</button>
       </div>
     </main>
   );
@@ -1051,7 +1197,8 @@ function ReportScreen({
   onBack: () => void;
   location: Location;
 }) {
-  const [reportType, setReportType] = useState<"correction" | "suggestion" | "collector-problem" | "collection-problem">("correction");
+  const [reportType, setReportType] = useState<"correction" | "suggestion" | "collector-problem" | "collection-problem" | "community-issue">("correction");
+  const [communityIssueType, setCommunityIssueType] = useState<"OVERFLOWING_BIN" | "OVERFLOWING_DROP_OFF" | "FACILITY_FULL" | "FACILITY_CLOSED" | "INCORRECT_OPENING_HOURS" | "ILLEGAL_DUMPING" | "BROKEN_GLASS" | "HAZARDOUS_WASTE" | "OTHER">("OVERFLOWING_BIN");
   const [facilityName, setFacilityName] = useState(location.name);
   const [address, setAddress] = useState(location.fullAddress.split(" · ")[0]);
   const [description, setDescription] = useState("");
@@ -1061,12 +1208,13 @@ function ReportScreen({
   const [collectionReference, setCollectionReference] = useState("");
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [incidentResult, setIncidentResult] = useState<{ id: string; reportCount: number; communityVerified: boolean; priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const chooseReportType = (type: "correction" | "suggestion" | "collector-problem" | "collection-problem") => {
+  const chooseReportType = (type: "correction" | "suggestion" | "collector-problem" | "collection-problem" | "community-issue") => {
     setReportType(type);
-    setFacilityName(type === "correction" ? location.name : "");
-    setAddress(type === "correction" ? location.fullAddress.split(" · ")[0] : "");
+    setFacilityName(type === "correction" || type === "community-issue" ? location.name : "");
+    setAddress(type === "correction" || type === "community-issue" ? location.fullAddress.split(" · ")[0] : "");
     setAcceptedMaterials(type === "correction" ? location.accepted : []);
     setError("");
   };
@@ -1076,7 +1224,8 @@ function ReportScreen({
       <div className="mx-auto flex min-h-[60vh] max-w-[600px] flex-col items-center justify-center bg-white px-6 py-12 text-center">
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#dff5ea] text-3xl font-semibold text-[#1b7a61]">✓</div>
         <h1 className="mt-5 text-[30px] font-semibold text-[#1a3d35]">Report submitted</h1>
-        <p className="mt-2 text-[15px] text-[#5d736d]">Your report has been sent to the WasteWise Admin team for review.</p>
+        {incidentResult?.priority === "CRITICAL" ? <p role="alert" className="mt-2 text-[15px] font-bold text-rose-800">⚠️ Critical issue reported</p> : <p className="mt-2 text-[15px] text-[#5d736d]">Your report has been sent for review.</p>}
+        {incidentResult && <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800"><p className="font-semibold">One incident · Reports: {incidentResult.reportCount}</p><p className="mt-1">Priority: {incidentResult.priority}</p>{incidentResult.communityVerified && <p className="mt-1 font-semibold text-green-800">Verified by community</p>}</div>}
         <button onClick={onBack} className="mt-6 rounded-[10px] bg-[#1f8f6d] px-5 py-3 text-sm font-semibold text-white hover:bg-[#177d62]">Back to the map</button>
       </div>
     );
@@ -1112,13 +1261,21 @@ function ReportScreen({
                 ? "COLLECTOR_PROBLEM"
                 : reportType === "collection-problem"
                   ? "COLLECTION_PROBLEM"
+                  : reportType === "community-issue"
+                    ? communityIssueType
                   : "INCORRECT_INFORMATION";
             const reportDescription = reportType === "collector-problem" || reportType === "collection-problem"
               ? `${collectionReference.trim() ? `Collection ${collectionReference.trim()}: ` : ""}${description.trim()}`
               : description.trim();
-            await createUserReport({
+            const result = await createUserReport({
               type,
               description: reportDescription,
+              ...(reportType === "community-issue" ? {
+                facilityId: location.facilityId,
+                latitude: location.latitude,
+                longitude: location.longitude,
+              } : {}),
+              ...(reportType === "correction" && location.facilityId ? { facilityId: location.facilityId } : {}),
               ...(reportType === "suggestion" ? {
                 suggestedName: facilityName.trim(),
                 suggestedAddress: address.trim(),
@@ -1132,6 +1289,7 @@ function ReportScreen({
                 suggestedLongitude: location.longitude,
               } : {}),
             });
+            setIncidentResult(result.incident);
             setSubmitted(true);
           } catch (caught) {
             setError(caught instanceof Error ? caught.message : "Could not submit this report.");
@@ -1146,9 +1304,16 @@ function ReportScreen({
           <button type="button" aria-pressed={reportType === "suggestion"} onClick={() => chooseReportType("suggestion")} className={`flex-1 rounded-[8px] px-3 py-2 text-[14px] font-medium ${reportType === "suggestion" ? "bg-white text-[#1d6d59] shadow-sm" : "text-[#48645b]"}`}>Suggest facility</button>
           <button type="button" aria-pressed={reportType === "collector-problem"} onClick={() => chooseReportType("collector-problem")} className={`flex-1 rounded-[8px] px-3 py-2 text-[14px] font-medium ${reportType === "collector-problem" ? "bg-white text-[#1d6d59] shadow-sm" : "text-[#48645b]"}`}>Collector problem</button>
           <button type="button" aria-pressed={reportType === "collection-problem"} onClick={() => chooseReportType("collection-problem")} className={`flex-1 rounded-[8px] px-3 py-2 text-[14px] font-medium ${reportType === "collection-problem" ? "bg-white text-[#1d6d59] shadow-sm" : "text-[#48645b]"}`}>Collection problem</button>
+          <button type="button" aria-pressed={reportType === "community-issue"} onClick={() => chooseReportType("community-issue")} className={`flex-1 rounded-[8px] px-3 py-2 text-[14px] font-medium ${reportType === "community-issue" ? "bg-white text-[#1d6d59] shadow-sm" : "text-[#48645b]"}`}>Community issue</button>
         </div>
 
         <div className="space-y-5">
+          {reportType === "community-issue" && <label className="block text-[14px] font-medium text-[#1d3a35]">Issue type
+            <select value={communityIssueType} onChange={(event) => setCommunityIssueType(event.target.value as typeof communityIssueType)} className="mt-2 w-full rounded-[10px] border border-[#d4ddd7] bg-white px-3 py-3 text-[14px]">
+              <option value="OVERFLOWING_BIN">Overflowing bin</option><option value="OVERFLOWING_DROP_OFF">Overflowing drop-off point</option><option value="FACILITY_FULL">Facility full</option><option value="FACILITY_CLOSED">Facility closed</option><option value="INCORRECT_OPENING_HOURS">Incorrect opening hours</option><option value="ILLEGAL_DUMPING">Illegal dumping</option><option value="BROKEN_GLASS">Broken glass</option><option value="HAZARDOUS_WASTE">Hazardous or toxic waste</option><option value="OTHER">Other</option>
+            </select>
+            <span className="mt-1 block text-xs text-gray-500">Location: {location.fullAddress}. Priority is determined by the server.</span>
+          </label>}
           <label className="block text-[14px] font-medium text-[#1d3a35]">
             {reportType === "collector-problem" || reportType === "collection-problem" ? "Facility name (optional)" : "Location name"}
             <input
@@ -1183,7 +1348,7 @@ function ReportScreen({
               onChange={(event) => setDescription(event.target.value)}
               rows={5}
               className="mt-2 w-full rounded-[10px] border border-[#d4ddd7] bg-white px-3 py-3 text-[14px] text-[#1d3a35] placeholder:text-[#7a887f] outline-none focus:border-[#1f8f6d]"
-              placeholder="Tell us what needs correcting or share details about the new location..."
+              placeholder={reportType === "community-issue" ? "Describe the issue at this location..." : "Tell us what needs correcting or share details about the new location..."}
             />
           </label>
 
@@ -1234,44 +1399,116 @@ export default function Home() {
   const [selectedLocation, setSelectedLocation] = useState<Location>(locations[0]);
   const [savedLocationNames, setSavedLocationNames] = useState<string[]>([]);
   const [collectionRequests, setCollectionRequests] = useState<CollectionRequest[]>([]);
+  const [collectorDashboard, setCollectorDashboard] = useState<CollectorDashboard | null>(null);
+  const [recyclerSummary, setRecyclerSummary] = useState<RecyclerSummary | null>(null);
+  const [recyclerProfile, setRecyclerProfile] = useState<RecyclerProfileRecord | null>(null);
+  const [facilityLocations, setFacilityLocations] = useState<Location[]>([]);
+  const [bufferedEvents, setBufferedEvents] = useState<BufferedCollectionEvent[]>([]);
   const [facilityProfiles, setFacilityProfiles] = useState<Record<string, FacilityProfile>>({});
+  const [facilityDashboard, setFacilityDashboard] = useState<FacilityOperationsDashboard | null>(null);
+  const [selectedFacilityId, setSelectedFacilityId] = useState("");
   const [pointsBalance, setPointsBalance] = useState(0);
   const [rewardRates, setRewardRates] = useState<Array<{ material: string; pointsPerKg: number }>>([]);
   const [rewardRedemptions, setRewardRedemptions] = useState<RecyclerRewards["redemptions"]>([]);
+  const [rewardCatalog, setRewardCatalog] = useState<RecyclerRewards["rewards"]>([]);
+  const [rewardTransactions, setRewardTransactions] = useState<RecyclerRewards["transactions"]>([]);
   const [userNotifications, setUserNotifications] = useState<UserNotification[]>([]);
   const [findInitialQuery, setFindInitialQuery] = useState("");
   const [findInitialMaterial, setFindInitialMaterial] = useState("All materials");
-  const savedLocations = locations.filter((location) => savedLocationNames.includes(location.name));
+  const [requestFacilityId, setRequestFacilityId] = useState("");
+  const [requestMaterial, setRequestMaterial] = useState("");
+  const savedLocations = facilityLocations.filter((location) => savedLocationNames.includes(location.name));
   const facilityProfile = currentUser ? facilityProfiles[currentUser.id] ?? null : null;
 
-  const refreshRoleWorkflow = async (userId: string, role: UserRole) => {
+  const refreshRoleWorkflow = useCallback(async (userId: string, role: UserRole, includeStaticData = true, facilityId?: string) => {
     if (role === "ADMIN") return;
-    const [records, notifications] = await Promise.all([getCollectionRequests(), getUserNotifications()]);
-    setCollectionRequests(records.map(toWorkflowCollection));
-    setUserNotifications(notifications);
+    if (role === "FACILITY") {
+      const choices = await getFacilityOperations(facilityId);
+      const nextFacilityId = facilityId ?? choices.facilities[0]?.id;
+      const operations = nextFacilityId && !facilityId ? await getFacilityOperations(nextFacilityId) : choices;
+      setSelectedFacilityId(nextFacilityId ?? "");
+      setFacilityDashboard(operations);
+      setCollectionRequests((operations.collections ?? []).map(toWorkflowCollection));
+      setUserNotifications(operations.notifications ?? []);
+      if (operations.facility) setFacilityProfiles((current) => ({
+        ...current,
+        [userId]: {
+          name: operations.facility!.name,
+          address: operations.facility!.address,
+          acceptedMaterials: operations.facility!.acceptedMaterials,
+          openingHours: operations.facility!.openingHours.map((hour) => hour.isClosed ? "Closed" : `${hour.opensAt ?? ""}-${hour.closesAt ?? ""}`),
+        },
+      }));
+      return;
+    }
+    const [records, notifications, collectorData] = await Promise.all([
+      role === "COLLECTOR" ? Promise.resolve([] as CollectionRecord[]) : getCollectionRequests(),
+      role === "RECYCLER" ? getUserNotifications() : Promise.resolve([] as UserNotification[]),
+      role === "COLLECTOR" ? getCollectorDashboard() : Promise.resolve(null),
+    ]);
+    setCollectionRequests((collectorData?.requests ?? records).map(toWorkflowCollection));
+    setCollectorDashboard(collectorData);
+    setUserNotifications(collectorData?.notifications ?? notifications);
+    setFacilityDashboard(null);
     if (role === "RECYCLER") {
-      const rewards = await getRecyclerRewards();
+      const [rewards, summary] = await Promise.all([
+        getRecyclerRewards(),
+        getRecyclerSummary(),
+      ]);
       setPointsBalance(rewards.pointsBalance);
       setRewardRates(rewards.rates);
       setRewardRedemptions(rewards.redemptions);
+      setRewardCatalog(rewards.rewards);
+      setRewardTransactions(rewards.transactions);
+      setRecyclerSummary(summary);
+      if (includeStaticData) {
+        const [profile, facilities, events] = await Promise.all([
+          getRecyclerProfile(),
+          getAvailableFacilities(""),
+          getBufferedCollectionEvents(),
+        ]);
+        setRecyclerProfile(profile);
+        setBufferedEvents(events);
+        const mappedFacilities = facilities.map(toLocation);
+        setFacilityLocations(mappedFacilities);
+        if (mappedFacilities.length) setSelectedLocation(mappedFacilities[0]);
+      }
     } else {
       setPointsBalance(0);
       setRewardRates([]);
       setRewardRedemptions([]);
+      setRewardCatalog([]);
+      setRewardTransactions([]);
+      setRecyclerSummary(null);
+      setRecyclerProfile(null);
+      setBufferedEvents([]);
     }
-    if (role === "FACILITY") {
-      const profile = await getFacilityProfile();
-      setFacilityProfiles((current) => ({
-        ...current,
-        [userId]: {
-          name: profile.name,
-          address: profile.address,
-          acceptedMaterials: profile.acceptedMaterials,
-          openingHours: profile.openingHours.map((hour) => hour.isClosed ? "Closed" : `${hour.opensAt ?? ""}-${hour.closesAt ?? ""}`),
-        },
-      }));
-    }
-  };
+  }, []);
+
+  const refreshRoleWorkflowRef = useRef(refreshRoleWorkflow);
+  useEffect(() => {
+    refreshRoleWorkflowRef.current = refreshRoleWorkflow;
+  }, [refreshRoleWorkflow]);
+
+  const selectedFacilityIdRef = useRef(selectedFacilityId);
+  useEffect(() => {
+    selectedFacilityIdRef.current = selectedFacilityId;
+  }, [selectedFacilityId]);
+
+  const activeUserId = currentUser?.id;
+  const activeUserRole = currentUser?.role;
+  useEffect(() => {
+    if (!isAuthenticated || !activeUserId || !activeUserRole || !["dashboard", "tracking", "rewards", "collector-board", "collector-pickups", "collector-history"].includes(screen)) return;
+    let isRefreshing = false;
+    const intervalId = window.setInterval(() => {
+      if (isRefreshing) return;
+      isRefreshing = true;
+      void refreshRoleWorkflowRef.current(activeUserId, activeUserRole, false, activeUserRole === "FACILITY" ? selectedFacilityIdRef.current || undefined : undefined)
+        .catch((caught: unknown) => setAuthError(caught instanceof Error ? caught.message : "Could not refresh your collection updates."))
+        .finally(() => { isRefreshing = false; });
+    }, 3000);
+    return () => window.clearInterval(intervalId);
+  }, [isAuthenticated, activeUserId, activeUserRole, screen]);
 
   useEffect(() => {
     let active = true;
@@ -1306,7 +1543,7 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [router, refreshRoleWorkflow]);
 
   const goToDashboard = () => {
     if (!isAuthenticated) {
@@ -1361,6 +1598,15 @@ export default function Home() {
     }
     setScreen("report");
   };
+  const goToCollectionRequest = (location?: Location) => {
+    if (!isAuthenticated || currentUser?.role !== "RECYCLER") {
+      setScreen("auth");
+      return;
+    }
+    setRequestFacilityId(location?.facilityId ?? "");
+    setRequestMaterial(location?.accepted[0] ?? "");
+    setScreen("collection-request");
+  };
   const goToSaved = () => {
     if (!isAuthenticated) {
       setScreen("auth");
@@ -1378,7 +1624,7 @@ export default function Home() {
     if (!currentUser) return;
     if (currentUser.role === "RECYCLER") {
       if (action === "Find drop-off points") goToFind();
-      else if (action === "Request collection") setScreen("collection-request");
+      else if (action === "Request collection") goToCollectionRequest();
       else if (action === "Track collections") setScreen("tracking");
       else if (action === "Earn points and redeem rewards") setScreen("rewards");
       return;
@@ -1394,27 +1640,55 @@ export default function Home() {
     }
   };
 
-  const createCollectionRequest = async (input: { material: string; destinationFacilityId: string; estimatedKg: number; requestedFor: string; pickupAddress: string; pickupLatitude: number; pickupLongitude: number }) => {
+  const createCollectionRequest = async (input: { material: string; destinationFacilityId: string; estimatedKg: number; requestedFor: string; pickupAddress: string; pickupLatitude: number; pickupLongitude: number; notes?: string }) => {
     if (!currentUser || currentUser.role !== "RECYCLER") throw new Error("Sign in with a Recycler account to request collection.");
     await createCollectionRequestApi(input);
     await refreshRoleWorkflow(currentUser.id, currentUser.role);
+  };
+
+  const cancelCollectionRequest = async (requestId: string) => {
+    if (!currentUser || currentUser.role !== "RECYCLER") throw new Error("Only the requesting Recycler can cancel this collection.");
+    await cancelCollection(requestId);
+    await refreshRoleWorkflow(currentUser.id, currentUser.role);
+  };
+
+  const createBufferedEvent = async (input: { material: string; destinationFacilityId: string; estimatedKg: number; requestedFor: string; pickupAddress: string; pickupLatitude: number; pickupLongitude: number; notes?: string }) => {
+    if (!currentUser || currentUser.role !== "RECYCLER") throw new Error("Sign in with a Recycler account to create a bin-full event.");
+    return createBufferedCollectionEvent({ ...input, idempotencyKey: crypto.randomUUID() });
+  };
+
+  const resolveCollectionBuffer = async (eventId: string) => {
+    await resolveBufferedCollectionEvent(eventId);
   };
 
   const acceptCollectionRequest = async (requestId: string) => {
     if (!currentUser || currentUser.role !== "COLLECTOR") throw new Error("Sign in with an approved Collector account to accept assignments.");
     await acceptCollectionApi(requestId);
     await refreshRoleWorkflow(currentUser.id, currentUser.role);
+    setScreen("collector-pickups");
   };
 
-  const declineCollectionRequest = async (requestId: string, reason: string) => {
+  const declineCollectionRequest = async (requestId: string, reasonCode: string, explanation?: string) => {
     if (!currentUser || currentUser.role !== "COLLECTOR") throw new Error("Sign in with an approved Collector account to decline assignments.");
-    await declineCollectionApi(requestId, reason);
+    await declineCollectionApi(requestId, reasonCode, explanation);
     await refreshRoleWorkflow(currentUser.id, currentUser.role);
   };
 
-  const recordCollectedMaterial = async (requestId: string, collectedWeightKg: number) => {
-    if (!currentUser || currentUser.role !== "COLLECTOR" || !Number.isFinite(collectedWeightKg) || collectedWeightKg <= 0) throw new Error("Enter a valid collected quantity.");
-    await recordCollectedWeight(requestId, collectedWeightKg);
+  const recordCollectedMaterial = async (requestId: string, input: { materials: Array<{ materialId: string; actualKg: number }>; notes?: string }) => {
+    if (!currentUser || currentUser.role !== "COLLECTOR" || !input.materials.length || input.materials.some((item) => !item.materialId || !Number.isFinite(item.actualKg) || item.actualKg < 0) || input.materials.reduce((total, item) => total + item.actualKg, 0) <= 0) throw new Error("Enter valid material categories and a positive total weight.");
+    await recordCollectedWeight(requestId, input);
+    await refreshRoleWorkflow(currentUser.id, currentUser.role);
+  };
+
+  const updateCollectionProgressForCollector = async (requestId: string, action: "ARRIVED" | "START" | "PAUSE" | "RESUME", details?: { delayCode?: string; explanation?: string }) => {
+    if (!currentUser || currentUser.role !== "COLLECTOR") throw new Error("Only the assigned Collector can update pickup progress.");
+    await updateCollectionProgress(requestId, action, details);
+    await refreshRoleWorkflow(currentUser.id, currentUser.role);
+  };
+
+  const saveCollectorSettings = async (input: Parameters<typeof updateCollectorProfile>[0]) => {
+    if (!currentUser || currentUser.role !== "COLLECTOR") throw new Error("Only Collector accounts can update collector settings.");
+    await updateCollectorProfile(input);
     await refreshRoleWorkflow(currentUser.id, currentUser.role);
   };
 
@@ -1426,25 +1700,89 @@ export default function Home() {
 
   const saveFacilityProfile = async (profile: FacilityProfile) => {
     if (!currentUser || currentUser.role !== "FACILITY") throw new Error("Sign in with a Facility account to update a profile.");
-    const savedProfile = await saveFacilityProfileApi(profile);
+    const savedProfile = await saveFacilityProfileApi({ ...profile, facilityId: selectedFacilityId });
     setFacilityProfiles((current) => ({ ...current, [currentUser.id]: {
       name: savedProfile.name,
       address: savedProfile.address,
       acceptedMaterials: savedProfile.acceptedMaterials,
       openingHours: savedProfile.openingHours.map((hour) => hour.isClosed ? "Closed" : `${hour.opensAt ?? ""}-${hour.closesAt ?? ""}`),
     } }));
+    await refreshRoleWorkflow(currentUser.id, currentUser.role, false, selectedFacilityId);
   };
 
-  const verifyReceivedMaterial = async (requestId: string, verifiedWeightKg: number) => {
-    if (!currentUser || currentUser.role !== "FACILITY" || !Number.isFinite(verifiedWeightKg) || verifiedWeightKg <= 0) throw new Error("Enter a valid received quantity.");
-    await verifyCollectedWeight(requestId, verifiedWeightKg);
+  const saveFacilityOperationsProfile = async (profile: FacilityProfileSaveInput) => {
+    if (!currentUser || currentUser.role !== "FACILITY") throw new Error("Sign in with a Facility account to update a profile.");
+    await saveFacilityProfileApi({ ...profile, facilityId: selectedFacilityId });
+  };
+
+  const updateFacilityStatusFromDashboard = async (status: "OPEN" | "CLOSED" | "TEMPORARILY_CLOSED") => {
+    if (!selectedFacilityId) throw new Error("Select a facility first.");
+    await updateFacilityStatus(selectedFacilityId, status);
+  };
+
+  const updateFacilityCapacityFromDashboard = async (materials: Array<{ materialId: string; capacityKg: number | null; currentKg: number }>) => {
+    if (!selectedFacilityId) throw new Error("Select a facility first.");
+    await updateFacilityCapacity({ facilityId: selectedFacilityId, materials });
+  };
+
+  const receiveFacilityCollectionFromDashboard = async (requestId: string, input: { receivedKg: number; condition: "ACCEPTABLE" | "CONTAMINATED" | "WRONG_MATERIAL" | "DAMAGED" | "OTHER"; notes?: string }) => {
+    if (!selectedFacilityId) throw new Error("Select a facility first.");
+    await receiveFacilityCollection(requestId, { ...input, facilityId: selectedFacilityId });
+  };
+
+  const rejectFacilityCollectionFromDashboard = async (requestId: string, input: { reasonCode: "WRONG_MATERIAL" | "CONTAMINATED" | "FACILITY_FULL" | "UNSUPPORTED_MATERIAL" | "OTHER"; notes?: string }) => {
+    if (!selectedFacilityId) throw new Error("Select a facility first.");
+    await rejectFacilityCollection(requestId, { ...input, facilityId: selectedFacilityId });
+  };
+
+  const reportFacilityIssue = async (input: { type: "EQUIPMENT_ISSUE" | "CAPACITY_PROBLEM" | "COLLECTION_PROBLEM" | "SAFETY_ISSUE" | "INCORRECT_MATERIAL" | "OTHER"; description: string }) => {
+    if (!selectedFacilityId) throw new Error("Select a facility first.");
+    await createFacilityIncident({ ...input, facilityId: selectedFacilityId });
+  };
+
+  const markFacilityNotificationAsRead = async (notificationId: string) => {
+    if (!selectedFacilityId) throw new Error("Select a facility first.");
+    await markFacilityNotificationRead(selectedFacilityId, notificationId);
+  };
+
+  const selectFacilityForOperations = (facilityId: string) => {
+    setSelectedFacilityId(facilityId);
+    if (currentUser?.role === "FACILITY") {
+      void refreshRoleWorkflow(currentUser.id, currentUser.role, false, facilityId).catch((caught: unknown) => setAuthError(caught instanceof Error ? caught.message : "Could not load this facility."));
+    }
+  };
+
+  const openFacilityMap = (location: Location) => {
+    setFacilityLocations([location]);
+    setSelectedLocation(location);
+    setScreen("map");
+  };
+
+  const verifyReceivedMaterial = async (requestId: string, input: { materials: Array<{ materialId: string; verifiedKg: number }> }) => {
+    if (!currentUser || currentUser.role !== "FACILITY" || !input.materials.length || input.materials.some((item) => !item.materialId || !Number.isFinite(item.verifiedKg) || item.verifiedKg < 0) || input.materials.reduce((total, item) => total + item.verifiedKg, 0) <= 0) throw new Error("Enter valid material weights with a positive total.");
+    await verifyCollectedWeight(requestId, input);
     await refreshRoleWorkflow(currentUser.id, currentUser.role);
   };
 
-  const redeemReward = async (cost: number) => {
+  const redeemReward = async (rewardId: string, idempotencyKey: string) => {
     if (!currentUser || currentUser.role !== "RECYCLER") throw new Error("Only Recycler accounts can request a reward redemption.");
-    await requestRewardRedemption(cost);
+    await redeemRewardApi(rewardId, idempotencyKey);
     await refreshRoleWorkflow(currentUser.id, currentUser.role);
+  };
+
+  const markNotificationRead = async (notificationId: string) => {
+    await markUserNotificationRead(notificationId);
+    setUserNotifications((current) => current.map((notification) => notification.id === notificationId ? { ...notification, readAt: new Date().toISOString() } : notification));
+  };
+
+  const saveRecyclerProfile = async (input: Partial<RecyclerProfileRecord>) => {
+    const profile = await updateRecyclerProfile(input);
+    setRecyclerProfile(profile);
+    setCurrentUser((current) => current ? { ...current, displayName: profile.displayName, email: profile.email } : current);
+  };
+
+  const updateRecyclerPassword = async (currentPassword: string, newPassword: string) => {
+    await changeRecyclerPassword(currentPassword, newPassword);
   };
 
   const redeemElectricity = async (cost: number, meterNumber: string) => {
@@ -1527,10 +1865,25 @@ export default function Home() {
 
       {authError && screen !== "auth" && <p role="alert" className="bg-red-50 px-4 py-2 text-center text-sm text-red-700">{authError}</p>}
       {screen === "auth" && <AuthScreen mode={authMode} setMode={(mode) => { setAuthMode(mode); setAuthError(""); }} onLogin={handleLogin} isSubmitting={isAuthSubmitting} errorMessage={authError} />}
-      {isAuthenticated && screen === "dashboard" && currentUser && (
+      {isAuthenticated && screen === "dashboard" && currentUser?.role === "COLLECTOR" && (
+        <CollectorDashboardScreen
+          displayName={currentUser.displayName}
+          dashboard={collectorDashboard}
+          requests={collectionRequests.filter((request) => request.collectorId === currentUser.id)}
+          onSetAvailability={(availability) => saveCollectorSettings({ availability })}
+          onSaveQualifications={(qualifiedMaterialIds) => saveCollectorSettings({ qualifiedMaterialIds })}
+          onOpenRequests={() => setScreen("collector-board")}
+          onOpenPickups={() => setScreen("collector-pickups")}
+          onOpenHistory={() => setScreen("collector-history")}
+          onMarkNotificationRead={markNotificationRead}
+        />
+      )}
+      {isAuthenticated && screen === "dashboard" && currentUser?.role === "RECYCLER" && (
         <DashboardScreen
           displayName={currentUser.displayName}
           role={currentUser.role}
+          summary={recyclerSummary}
+          facilities={facilityLocations}
           onSearch={(query) => openFind(query)}
           onOpenFind={goToFind}
           onOpenMap={goToMap}
@@ -1538,18 +1891,36 @@ export default function Home() {
           onSelectMaterial={(material) => openFind("", material)}
           onOpenDirections={(location) => openDirections(location)}
           onRoleAction={handleRoleAction}
+          onOpenProfile={() => setScreen("profile")}
         />
       )}
-      {isAuthenticated && screen === "find" && <FindScreen onBack={goToDashboard} onSelect={goToDetails} onMap={() => goToMap()} initialQuery={findInitialQuery} initialMaterial={findInitialMaterial} />}
-      {isAuthenticated && screen === "map" && <MapScreen location={selectedLocation} onBack={goToFind} onOpenDetails={() => goToDetails(selectedLocation)} onReport={goToReport} onSelectLocation={setSelectedLocation} />}
-      {isAuthenticated && screen === "details" && <DetailsScreen location={selectedLocation} onBack={goToFind} onDirections={() => openDirections(selectedLocation)} isSaved={savedLocationNames.includes(selectedLocation.name)} onToggleSave={() => toggleSavedLocation(selectedLocation)} />}
+      {isAuthenticated && screen === "dashboard" && currentUser?.role === "FACILITY" && <FacilityOperationsScreen
+        dashboard={facilityDashboard}
+        selectedFacilityId={selectedFacilityId}
+        onSelectFacility={selectFacilityForOperations}
+        onRefresh={() => refreshRoleWorkflow(currentUser.id, currentUser.role, false, selectedFacilityId)}
+        onSaveProfile={saveFacilityOperationsProfile}
+        onUpdateStatus={updateFacilityStatusFromDashboard}
+        onUpdateCapacity={updateFacilityCapacityFromDashboard}
+        onReceive={receiveFacilityCollectionFromDashboard}
+        onVerify={verifyReceivedMaterial}
+        onReject={rejectFacilityCollectionFromDashboard}
+        onReport={reportFacilityIssue}
+        onMarkNotificationRead={markFacilityNotificationAsRead}
+        onOpenMap={openFacilityMap}
+      />}
+      {isAuthenticated && screen === "find" && <FindScreen facilities={facilityLocations} onBack={goToDashboard} onSelect={goToDetails} onMap={() => goToMap()} onDirections={openDirections} onRequest={goToCollectionRequest} initialQuery={findInitialQuery} initialMaterial={findInitialMaterial} />}
+      {isAuthenticated && screen === "map" && <MapScreen facilities={facilityLocations} location={selectedLocation} onBack={currentUser?.role === "FACILITY" ? goToDashboard : goToFind} onOpenDetails={() => goToDetails(selectedLocation)} onReport={goToReport} onSelectLocation={setSelectedLocation} onDirections={openDirections} onRequest={goToCollectionRequest} />}
+      {isAuthenticated && screen === "details" && <DetailsScreen location={selectedLocation} onBack={goToFind} onDirections={() => openDirections(selectedLocation)} onRequest={goToCollectionRequest} isSaved={savedLocationNames.includes(selectedLocation.name)} onToggleSave={() => toggleSavedLocation(selectedLocation)} />}
       {isAuthenticated && screen === "saved" && <SavedScreen locations={savedLocations} onSelect={goToDetails} />}
       {isAuthenticated && screen === "report" && <ReportScreen onBack={() => goToMap()} location={selectedLocation} />}
-      {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "collection-request" && <CollectionRequestScreen onBack={goToDashboard} onCreate={createCollectionRequest} />}
-      {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "tracking" && <TrackingScreen requests={collectionRequests.filter((request) => request.recyclerId === currentUser.id)} points={pointsBalance} rates={rewardRates} notifications={userNotifications} onBack={goToDashboard} onRewards={() => setScreen("rewards")} onRefresh={() => refreshRoleWorkflow(currentUser.id, currentUser.role)} />}
-      {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "rewards" && <RewardsScreen points={pointsBalance} rates={rewardRates} redemptions={rewardRedemptions} onBack={goToDashboard} onRedeem={redeemReward} onElectricityRedeem={redeemElectricity} />}
-      {isAuthenticated && currentUser?.role === "COLLECTOR" && screen === "collector-board" && <CollectorBoardScreen requests={collectionRequests.filter((request) => request.status === "Assigned")} onBack={goToDashboard} onAccept={acceptCollectionRequest} onDecline={declineCollectionRequest} />}
-      {isAuthenticated && currentUser?.role === "COLLECTOR" && screen === "collector-pickups" && <CollectorPickupsScreen requests={collectionRequests.filter((request) => request.collectorId === currentUser.id)} onBack={goToDashboard} onRecordCollection={recordCollectedMaterial} onUpdateLocation={updateCollectorCurrentLocation} />}
+      {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "collection-request" && <CollectionRequestScreen onBack={goToDashboard} onCreate={createCollectionRequest} onCreateBufferedEvent={createBufferedEvent} onResolveBuffer={resolveCollectionBuffer} onBufferComplete={() => refreshRoleWorkflow(currentUser.id, currentUser.role)} existingBuffer={bufferedEvents[0] ?? null} initialMaterial={requestMaterial} initialFacilityId={requestFacilityId} />}
+      {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "tracking" && <TrackingScreen requests={collectionRequests.filter((request) => request.recyclerId === currentUser.id)} points={pointsBalance} rates={rewardRates} notifications={userNotifications} onBack={goToDashboard} onRewards={() => setScreen("rewards")} onRefresh={() => refreshRoleWorkflow(currentUser.id, currentUser.role)} onCancel={cancelCollectionRequest} onMarkNotificationRead={markNotificationRead} />}
+      {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "rewards" && <RewardsScreen points={pointsBalance} rates={rewardRates} rewards={rewardCatalog} transactions={rewardTransactions} redemptions={rewardRedemptions} onBack={goToDashboard} onRedeem={redeemReward} onElectricityRedeem={redeemElectricity} />}
+      {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "profile" && <RecyclerProfileScreen key={recyclerProfile?.email ?? "loading"} profile={recyclerProfile} onBack={goToDashboard} onSave={saveRecyclerProfile} onChangePassword={updateRecyclerPassword} />}
+      {isAuthenticated && currentUser?.role === "COLLECTOR" && screen === "collector-board" && <CollectorBoardScreen requests={collectionRequests.filter((request) => request.collectorId === currentUser.id && request.assignmentStatus === "ASSIGNED")} onBack={goToDashboard} onAccept={acceptCollectionRequest} onDecline={declineCollectionRequest} />}
+      {isAuthenticated && currentUser?.role === "COLLECTOR" && screen === "collector-pickups" && <CollectorPickupsScreen requests={collectionRequests.filter((request) => request.collectorId === currentUser.id)} materials={collectorDashboard?.materials ?? []} onBack={goToDashboard} onRecordCollection={recordCollectedMaterial} onUpdateLocation={updateCollectorCurrentLocation} onUpdateProgress={updateCollectionProgressForCollector} />}
+      {isAuthenticated && currentUser?.role === "COLLECTOR" && screen === "collector-history" && <CollectorHistoryScreen requests={collectionRequests.filter((request) => request.collectorId === currentUser.id)} performance={collectorDashboard?.performance ?? null} onBack={goToDashboard} />}
       {isAuthenticated && currentUser?.role === "FACILITY" && screen === "facility-profile" && <FacilityProfileScreen profile={facilityProfile} onBack={goToDashboard} onSave={saveFacilityProfile} />}
       {isAuthenticated && currentUser?.role === "FACILITY" && screen === "facility-verification" && <FacilityVerificationScreen requests={collectionRequests} profile={facilityProfile} onBack={goToDashboard} onVerify={verifyReceivedMaterial} />}
       </div>

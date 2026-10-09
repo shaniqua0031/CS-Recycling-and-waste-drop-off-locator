@@ -7,6 +7,519 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id                        String                      @id @default(cuid())
+  email                     String                      @unique
+  passwordHash              String
+  role                      UserRole
+  status                    AccountStatus               @default(ACTIVE)
+  createdAt                 DateTime                    @default(now())
+  updatedAt                 DateTime                    @updatedAt
+  adminAuditLogs            AdminAuditLog[]
+  simulatorEvents           AdminSimulatorEvent[]
+  bufferedCollectionEvents  BufferedCollectionEvent[]
+  assignmentsMade           CollectionAssignment[]      @relation("AssignmentAdmin")
+  createdCollectionRequests CollectionRequest[]         @relation("RequestOwner")
+  statusEvents              CollectionStatusEvent[]     @relation("StatusActor")
+  weightsReceived           CollectionWeight[]          @relation("WeightReceiver")
+  weightsRecorded           CollectionWeight[]          @relation("WeightRecorder")
+  weightsVerified           CollectionWeight[]          @relation("WeightVerifier")
+  collectorProfile          CollectorProfile?
+  createdFacilities         Facility[]                  @relation("FacilityCreator")
+  createdMaintenanceWindows FacilityMaintenanceWindow[] @relation("MaintenanceCreator")
+  facilityMemberships       FacilityMembership[]
+  createdSensorEvents       FacilitySensorEvent[]       @relation("SensorEventCreator")
+  incidentPriorityOverrides Incident[]                  @relation("IncidentPriorityOverride")
+  notifications             Notification[]
+  recyclerProfile           RecyclerProfile?
+  reports                   Report[]
+  rewardWallet              RewardWallet?
+  sessions                  Session[]
+
+  @@index([role, status])
+}
+
+model Session {
+  id        String    @id
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model RecyclerProfile {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  displayName         String
+  phone               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  collectionAddress   String?
+  collectionLatitude  Float?
+  collectionLongitude Float?
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model CollectorProfile {
+  id                     String                 @id @default(cuid())
+  userId                 String                 @unique
+  approvalStatus         ApprovalStatus         @default(PENDING)
+  availability           CollectorAvailability  @default(OFFLINE)
+  serviceArea            String?
+  serviceRadiusKm        Float?
+  serviceCenterLatitude  Float?
+  serviceCenterLongitude Float?
+  vehicleType            String?
+  vehicleDescription     String?
+  vehicleRegistration    String?
+  currentLatitude        Float?
+  currentLongitude       Float?
+  lastLocationUpdatedAt  DateTime?
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+  qualifiedMaterialIds   String[]               @default([])
+  assignments            CollectionAssignment[]
+  user                   User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignedIncidents      Incident[]
+
+  @@index([approvalStatus, availability])
+}
+
+model Facility {
+  id                 String                      @id @default(cuid())
+  name               String
+  address            String
+  latitude           Float
+  longitude          Float
+  phone              String?
+  email              String?
+  website            String?
+  approvalStatus     ApprovalStatus              @default(PENDING)
+  createdByUserId    String?
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
+  isSuspended        Boolean                     @default(false)
+  description        String?
+  operationalStatus  FacilityOperationalStatus   @default(OPEN)
+  bufferedEvents     BufferedCollectionEvent[]
+  requests           CollectionRequest[]
+  verifiedWeights    CollectionWeight[]
+  createdBy          User?                       @relation("FacilityCreator", fields: [createdByUserId], references: [id])
+  maintenanceWindows FacilityMaintenanceWindow[]
+  materials          FacilityMaterial[]
+  memberships        FacilityMembership[]
+  openingHours       FacilityOpeningHour[]
+  sensorEvents       FacilitySensorEvent[]
+  incidents          Incident[]
+  notifications      Notification[]
+  reports            Report[]
+
+  @@index([approvalStatus, name])
+}
+
+model FacilityMembership {
+  id         String                 @id @default(cuid())
+  facilityId String
+  userId     String
+  role       FacilityMembershipRole @default(STAFF)
+  createdAt  DateTime               @default(now())
+  facility   Facility               @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([facilityId, userId])
+  @@index([userId])
+}
+
+model FacilityOpeningHour {
+  id         String   @id @default(cuid())
+  facilityId String
+  dayOfWeek  Int
+  opensAt    String?
+  closesAt   String?
+  isClosed   Boolean  @default(false)
+  facility   Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@unique([facilityId, dayOfWeek])
+}
+
+model Material {
+  id                String                     @id @default(cuid())
+  slug              String                     @unique
+  name              String                     @unique
+  isActive          Boolean                    @default(true)
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  bufferedEvents    BufferedCollectionEvent[]
+  collectionWeights CollectionMaterialWeight[]
+  requests          CollectionRequest[]
+  facilityLinks     FacilityMaterial[]
+  incidents         Incident[]
+  rewardRates       MaterialRewardRate[]
+}
+
+model FacilityMaterial {
+  facilityId  String
+  materialId  String
+  intakeNotes String?
+  capacityKg  Decimal? @db.Decimal(10, 2)
+  currentKg   Decimal  @default(0) @db.Decimal(10, 2)
+  facility    Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  material    Material @relation(fields: [materialId], references: [id])
+
+  @@id([facilityId, materialId])
+  @@index([materialId])
+}
+
+model MaterialRewardRate {
+  id          String    @id @default(cuid())
+  materialId  String
+  pointsPerKg Int
+  startsAt    DateTime  @default(now())
+  endsAt      DateTime?
+  createdAt   DateTime  @default(now())
+  material    Material  @relation(fields: [materialId], references: [id])
+
+  @@unique([materialId, startsAt])
+  @@index([materialId, endsAt])
+}
+
+model CollectionRequest {
+  id                    String                     @id @default(cuid())
+  requesterId           String
+  materialId            String
+  destinationFacilityId String?
+  estimatedKg           Decimal                    @db.Decimal(8, 2)
+  requestedFor          DateTime
+  requestedWindowEnd    DateTime?
+  pickupAddress         String
+  pickupLatitude        Float
+  pickupLongitude       Float
+  status                CollectionStatus           @default(PENDING)
+  cancellationReason    String?
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
+  notes                 String?
+  bufferedEventId       String?                    @unique
+  priority              IncidentPriority           @default(MEDIUM)
+  maintenanceWindowId   String?
+  assignments           CollectionAssignment[]
+  materialWeights       CollectionMaterialWeight[]
+  bufferedEvent         BufferedCollectionEvent?   @relation(fields: [bufferedEventId], references: [id])
+  destinationFacility   Facility?                  @relation(fields: [destinationFacilityId], references: [id])
+  maintenanceWindow     FacilityMaintenanceWindow? @relation(fields: [maintenanceWindowId], references: [id])
+  material              Material                   @relation(fields: [materialId], references: [id])
+  requester             User                       @relation("RequestOwner", fields: [requesterId], references: [id])
+  statusEvents          CollectionStatusEvent[]
+  weight                CollectionWeight?
+  rewardTransactions    RewardTransaction[]
+
+  @@index([requesterId, createdAt])
+  @@index([status, requestedFor])
+  @@index([destinationFacilityId, status])
+  @@index([maintenanceWindowId, status])
+}
+
+model CollectionAssignment {
+  id                 String            @id @default(cuid())
+  requestId          String
+  collectorProfileId String
+  assignedByUserId   String?
+  status             AssignmentStatus  @default(ASSIGNED)
+  assignedAt         DateTime          @default(now())
+  acceptedAt         DateTime?
+  unassignedAt       DateTime?
+  reason             String?
+  declineReasonCode  String?
+  assignedBy         User?             @relation("AssignmentAdmin", fields: [assignedByUserId], references: [id], onDelete: Restrict)
+  collector          CollectorProfile  @relation(fields: [collectorProfileId], references: [id])
+  request            CollectionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, assignedAt])
+  @@index([collectorProfileId, status])
+}
+
+model CollectionStatusEvent {
+  id         String            @id @default(cuid())
+  requestId  String
+  actorId    String?
+  fromStatus CollectionStatus?
+  toStatus   CollectionStatus
+  note       String?
+  createdAt  DateTime          @default(now())
+  actor      User?             @relation("StatusActor", fields: [actorId], references: [id])
+  request    CollectionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, createdAt])
+}
+
+model CollectionWeight {
+  id                 String            @id @default(cuid())
+  requestId          String            @unique
+  estimatedKg        Decimal           @db.Decimal(8, 2)
+  actualKg           Decimal?          @db.Decimal(8, 2)
+  verifiedKg         Decimal?          @db.Decimal(8, 2)
+  recordedByUserId   String?
+  verifiedByUserId   String?
+  verifiedFacilityId String?
+  recordedAt         DateTime?
+  verifiedAt         DateTime?
+  notes              String?
+  facilityReceivedKg Decimal?          @db.Decimal(8, 2)
+  receivedByUserId   String?
+  receivedAt         DateTime?
+  facilityCondition  String?
+  facilityNotes      String?
+  receivedBy         User?             @relation("WeightReceiver", fields: [receivedByUserId], references: [id])
+  recordedBy         User?             @relation("WeightRecorder", fields: [recordedByUserId], references: [id])
+  request            CollectionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  verifiedBy         User?             @relation("WeightVerifier", fields: [verifiedByUserId], references: [id])
+  verifiedFacility   Facility?         @relation(fields: [verifiedFacilityId], references: [id])
+
+  @@index([verifiedFacilityId, verifiedAt])
+}
+
+model CollectionMaterialWeight {
+  id         String            @id @default(cuid())
+  requestId  String
+  materialId String
+  actualKg   Decimal           @db.Decimal(8, 2)
+  verifiedKg Decimal?          @db.Decimal(8, 2)
+  recordedAt DateTime          @default(now())
+  verifiedAt DateTime?
+  material   Material          @relation(fields: [materialId], references: [id])
+  request    CollectionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, materialId])
+  @@index([materialId, recordedAt])
+}
+
+model RewardWallet {
+  id            String              @id @default(cuid())
+  userId        String              @unique
+  pointsBalance Int                 @default(0)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  redemptions   RewardRedemption[]
+  transactions  RewardTransaction[]
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RewardTransaction {
+  id             String                @id @default(cuid())
+  walletId       String
+  requestId      String?
+  redemptionId   String?               @unique
+  type           RewardTransactionType
+  pointsDelta    Int
+  randValueCents Int
+  idempotencyKey String                @unique
+  description    String?
+  createdAt      DateTime              @default(now())
+  redemption     RewardRedemption?     @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
+  request        CollectionRequest?    @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  wallet         RewardWallet          @relation(fields: [walletId], references: [id])
+
+  @@index([walletId, createdAt])
+}
+
+model RewardRedemption {
+  id             String             @id @default(cuid())
+  walletId       String
+  reference      String             @unique
+  pointsCost     Int
+  valueCents     Int
+  status         RedemptionStatus   @default(REQUESTED)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  type           RedemptionType     @default(REWARD)
+  meterNumber    String?
+  rewardId       String?
+  rewardName     String?
+  idempotencyKey String?            @unique
+  reward         RewardCatalogItem? @relation(fields: [rewardId], references: [id], onDelete: Restrict)
+  wallet         RewardWallet       @relation(fields: [walletId], references: [id])
+  transaction    RewardTransaction?
+}
+
+model RewardCatalogItem {
+  id          String             @id
+  name        String
+  description String
+  pointsCost  Int
+  isAvailable Boolean            @default(true)
+  redemptions RewardRedemption[]
+
+  @@index([isAvailable, pointsCost])
+}
+
+model Notification {
+  id         String           @id @default(cuid())
+  userId     String
+  type       NotificationType
+  title      String
+  body       String
+  metadata   Json?
+  readAt     DateTime?
+  createdAt  DateTime         @default(now())
+  facilityId String?
+  facility   Facility?        @relation(fields: [facilityId], references: [id])
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([facilityId, createdAt])
+}
+
+model BufferedCollectionEvent {
+  id                    String              @id @default(cuid())
+  idempotencyKey        String              @unique
+  requesterId           String
+  materialId            String
+  destinationFacilityId String?
+  estimatedKg           Decimal             @db.Decimal(8, 2)
+  requestedFor          DateTime
+  pickupAddress         String
+  pickupLatitude        Float
+  pickupLongitude       Float
+  notes                 String?
+  status                BufferedEventStatus @default(OPEN)
+  priority              IncidentPriority    @default(LOW)
+  activateAt            DateTime
+  resolvedAt            DateTime?
+  createdAt             DateTime            @default(now())
+  destinationFacility   Facility?           @relation(fields: [destinationFacilityId], references: [id])
+  material              Material            @relation(fields: [materialId], references: [id])
+  requester             User                @relation(fields: [requesterId], references: [id])
+  activatedRequest      CollectionRequest?
+
+  @@index([status, activateAt])
+  @@index([requesterId, createdAt])
+}
+
+model Incident {
+  id                         String            @id @default(cuid())
+  type                       ReportType
+  priority                   IncidentPriority  @default(LOW)
+  facilityId                 String?
+  latitude                   Float
+  longitude                  Float
+  reportCount                Int               @default(0)
+  communityVerified          Boolean           @default(false)
+  firstReportedAt            DateTime          @default(now())
+  lastReportedAt             DateTime          @default(now())
+  resolvedAt                 DateTime?
+  createdAt                  DateTime          @default(now())
+  updatedAt                  DateTime          @updatedAt
+  materialId                 String?
+  details                    String?
+  dedupeKey                  String?           @unique
+  priorityScore              Float             @default(0)
+  priorityFactors            Json?
+  priorityOverridden         Boolean           @default(false)
+  priorityOverriddenByUserId String?
+  priorityOverrideReason     String?
+  priorityOverriddenAt       DateTime?
+  assignedCollectorProfileId String?
+  assignedCollector          CollectorProfile? @relation(fields: [assignedCollectorProfileId], references: [id])
+  facility                   Facility?         @relation(fields: [facilityId], references: [id])
+  material                   Material?         @relation(fields: [materialId], references: [id])
+  priorityOverriddenBy       User?             @relation("IncidentPriorityOverride", fields: [priorityOverriddenByUserId], references: [id])
+  reports                    Report[]
+
+  @@index([type, facilityId, lastReportedAt])
+  @@index([priority, resolvedAt])
+  @@index([assignedCollectorProfileId, resolvedAt])
+}
+
+model FacilityMaintenanceWindow {
+  id                 String              @id @default(cuid())
+  facilityId         String
+  createdByUserId    String
+  startsAt           DateTime
+  endsAt             DateTime
+  gracePeriodMinutes Int                 @default(15)
+  overrunEnabled     Boolean             @default(false)
+  status             String              @default("SCHEDULED")
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  requests           CollectionRequest[]
+  createdBy          User                @relation("MaintenanceCreator", fields: [createdByUserId], references: [id])
+  facility           Facility            @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId, status, startsAt, endsAt])
+}
+
+model FacilitySensorEvent {
+  id              String    @id @default(cuid())
+  facilityId      String
+  createdByUserId String
+  reading         Float
+  expiresAt       DateTime
+  resetAt         DateTime?
+  createdAt       DateTime  @default(now())
+  createdBy       User      @relation("SensorEventCreator", fields: [createdByUserId], references: [id])
+  facility        Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId, expiresAt, resetAt])
+}
+
+model AdminSimulatorEvent {
+  id         String    @id @default(cuid())
+  adminId    String
+  action     String
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  resetAt    DateTime?
+  createdAt  DateTime  @default(now())
+  admin      User      @relation(fields: [adminId], references: [id])
+
+  @@index([createdAt])
+  @@index([resetAt, createdAt])
+}
+
+model Report {
+  id                         String       @id @default(cuid())
+  reporterId                 String
+  facilityId                 String?
+  type                       ReportType
+  status                     ReportStatus @default(OPEN)
+  description                String
+  suggestedName              String?
+  suggestedAddress           String?
+  suggestedLatitude          Float?
+  suggestedLongitude         Float?
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
+  suggestedAcceptedMaterials String[]     @default([])
+  latitude                   Float?
+  longitude                  Float?
+  incidentId                 String?
+  facility                   Facility?    @relation(fields: [facilityId], references: [id])
+  incident                   Incident?    @relation(fields: [incidentId], references: [id])
+  reporter                   User         @relation(fields: [reporterId], references: [id])
+
+  @@index([status, createdAt])
+}
+
+model AdminAuditLog {
+  id         String   @id @default(cuid())
+  adminId    String
+  entityType String
+  entityId   String
+  action     String
+  reason     String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  admin      User     @relation(fields: [adminId], references: [id])
+
+  @@index([entityType, entityId, createdAt])
+  @@index([adminId, createdAt])
+}
+
 enum UserRole {
   RECYCLER
   COLLECTOR
@@ -39,9 +552,18 @@ enum FacilityMembershipRole {
   STAFF
 }
 
+enum FacilityOperationalStatus {
+  OPEN
+  CLOSED
+  TEMPORARILY_CLOSED
+  NEAR_CAPACITY
+  FULL
+}
+
 enum CollectionStatus {
   PENDING
   WAITING_FOR_ADMIN
+  SCHEDULED_MAINTENANCE
   COLLECTOR_ASSIGNED
   COLLECTOR_ON_THE_WAY
   COLLECTOR_ARRIVED
@@ -51,6 +573,8 @@ enum CollectionStatus {
   COMPLETED
   CANCELLED
   REJECTED
+  COLLECTING
+  PAUSED
 }
 
 enum AssignmentStatus {
@@ -69,10 +593,10 @@ enum RewardTransactionType {
 
 enum RedemptionStatus {
   REQUESTED
-  APPROVED
   FULFILLED
   REJECTED
   CANCELLED
+  APPROVED
 }
 
 enum RedemptionType {
@@ -83,7 +607,6 @@ enum RedemptionType {
 enum NotificationType {
   COLLECTION_REQUEST_CREATED
   COLLECTOR_ASSIGNED
-  COLLECTOR_DECLINED
   COLLECTOR_ON_THE_WAY
   COLLECTOR_ARRIVED
   COLLECTION_COMPLETED
@@ -93,14 +616,50 @@ enum NotificationType {
   COLLECTOR_REGISTRATION
   FACILITY_REGISTRATION
   REPORT_SUBMITTED
+  COLLECTOR_DECLINED
+  COLLECTION_STARTED
+  COLLECTION_PAUSED
+  COLLECTION_RESUMED
+  COLLECTION_PRIORITY_CHANGED
+  COLLECTION_CANCELLED
+  COLLECTION_REASSIGNED
+  FACILITY_ISSUE
+  ADMIN_MESSAGE
+  CAPACITY_WARNING
+  FACILITY_FULL
 }
 
 enum ReportType {
   INCORRECT_INFORMATION
   SUGGEST_NEW_FACILITY
+  OTHER
   COLLECTOR_PROBLEM
   COLLECTION_PROBLEM
-  OTHER
+  OVERFLOWING_BIN
+  OVERFLOWING_DROP_OFF
+  FACILITY_FULL
+  FACILITY_CLOSED
+  INCORRECT_OPENING_HOURS
+  ILLEGAL_DUMPING
+  BROKEN_GLASS
+  HAZARDOUS_WASTE
+  EQUIPMENT_ISSUE
+  CAPACITY_PROBLEM
+  SAFETY_ISSUE
+  INCORRECT_MATERIAL
+}
+
+enum IncidentPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum BufferedEventStatus {
+  OPEN
+  RESOLVED
+  ACTIVATED
 }
 
 enum ReportStatus {
@@ -108,333 +667,4 @@ enum ReportStatus {
   UNDER_REVIEW
   RESOLVED
   REJECTED
-}
-
-model User {
-  id                       String                    @id @default(cuid())
-  email                    String                    @unique
-  passwordHash             String
-  role                     UserRole
-  status                   AccountStatus             @default(ACTIVE)
-  createdAt                DateTime                  @default(now())
-  updatedAt                DateTime                  @updatedAt
-  sessions                 Session[]
-  recyclerProfile          RecyclerProfile?
-  collectorProfile         CollectorProfile?
-  createdFacilities        Facility[]                @relation("FacilityCreator")
-  facilityMemberships      FacilityMembership[]
-  createdCollectionRequests CollectionRequest[]       @relation("RequestOwner")
-  assignmentsMade          CollectionAssignment[]    @relation("AssignmentAdmin")
-  statusEvents             CollectionStatusEvent[]  @relation("StatusActor")
-  weightsRecorded          CollectionWeight[]        @relation("WeightRecorder")
-  weightsVerified          CollectionWeight[]        @relation("WeightVerifier")
-  rewardWallet             RewardWallet?
-  notifications            Notification[]
-  reports                  Report[]
-  adminAuditLogs            AdminAuditLog[]
-
-  @@index([role, status])
-}
-
-model Session {
-  id        String    @id
-  userId    String
-  tokenHash String    @unique
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime  @default(now())
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, expiresAt])
-}
-
-model RecyclerProfile {
-  id          String   @id @default(cuid())
-  userId      String   @unique
-  displayName String
-  phone       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model CollectorProfile {
-  id                    String                @id @default(cuid())
-  userId                String                @unique
-  approvalStatus        ApprovalStatus        @default(PENDING)
-  availability          CollectorAvailability @default(OFFLINE)
-  serviceArea           String?
-  serviceRadiusKm       Float?
-  serviceCenterLatitude Float?
-  serviceCenterLongitude Float?
-  vehicleType           String?
-  vehicleDescription    String?
-  vehicleRegistration   String?
-  currentLatitude       Float?
-  currentLongitude      Float?
-  lastLocationUpdatedAt DateTime?
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
-  user                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  assignments           CollectionAssignment[]
-
-  @@index([approvalStatus, availability])
-}
-
-model Facility {
-  id              String               @id @default(cuid())
-  name            String
-  address         String
-  latitude        Float
-  longitude       Float
-  phone           String?
-  email           String?
-  website         String?
-  approvalStatus  ApprovalStatus       @default(PENDING)
-  isSuspended     Boolean              @default(false)
-  createdByUserId String?
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
-  createdBy       User?                @relation("FacilityCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  memberships     FacilityMembership[]
-  openingHours    FacilityOpeningHour[]
-  materials       FacilityMaterial[]
-  requests        CollectionRequest[]
-  verifiedWeights CollectionWeight[]
-  reports         Report[]
-
-  @@index([approvalStatus, name])
-}
-
-model FacilityMembership {
-  id         String                @id @default(cuid())
-  facilityId String
-  userId     String
-  role       FacilityMembershipRole @default(STAFF)
-  createdAt  DateTime              @default(now())
-  facility   Facility              @relation(fields: [facilityId], references: [id], onDelete: Cascade)
-  user       User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([facilityId, userId])
-  @@index([userId])
-}
-
-model FacilityOpeningHour {
-  id         String   @id @default(cuid())
-  facilityId String
-  dayOfWeek  Int
-  opensAt    String?
-  closesAt   String?
-  isClosed   Boolean  @default(false)
-  facility   Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
-
-  @@unique([facilityId, dayOfWeek])
-}
-
-model Material {
-  id            String              @id @default(cuid())
-  slug          String              @unique
-  name          String              @unique
-  isActive      Boolean             @default(true)
-  facilityLinks FacilityMaterial[]
-  rewardRates   MaterialRewardRate[]
-  requests      CollectionRequest[]
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-}
-
-model FacilityMaterial {
-  facilityId String
-  materialId String
-  intakeNotes String?
-  facility   Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
-  material   Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
-
-  @@id([facilityId, materialId])
-  @@index([materialId])
-}
-
-model MaterialRewardRate {
-  id           String   @id @default(cuid())
-  materialId   String
-  pointsPerKg  Int
-  startsAt     DateTime @default(now())
-  endsAt       DateTime?
-  createdAt    DateTime @default(now())
-  material     Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
-
-  @@unique([materialId, startsAt])
-  @@index([materialId, endsAt])
-}
-
-model CollectionRequest {
-  id                   String                   @id @default(cuid())
-  requesterId          String
-  materialId           String
-  destinationFacilityId String?
-  estimatedKg          Decimal                  @db.Decimal(8, 2)
-  requestedFor         DateTime
-  requestedWindowEnd   DateTime?
-  pickupAddress        String
-  pickupLatitude       Float
-  pickupLongitude      Float
-  status               CollectionStatus         @default(PENDING)
-  cancellationReason   String?
-  createdAt            DateTime                 @default(now())
-  updatedAt            DateTime                 @updatedAt
-  requester            User                     @relation("RequestOwner", fields: [requesterId], references: [id], onDelete: Restrict)
-  material             Material                 @relation(fields: [materialId], references: [id], onDelete: Restrict)
-  destinationFacility  Facility?                @relation(fields: [destinationFacilityId], references: [id], onDelete: SetNull)
-  assignments          CollectionAssignment[]
-  statusEvents         CollectionStatusEvent[]
-  weight               CollectionWeight?
-  rewardTransactions   RewardTransaction[]
-
-  @@index([requesterId, createdAt])
-  @@index([status, requestedFor])
-  @@index([destinationFacilityId, status])
-}
-
-model CollectionAssignment {
-  id                String           @id @default(cuid())
-  requestId         String
-  collectorProfileId String
-  assignedByUserId  String
-  status            AssignmentStatus @default(ASSIGNED)
-  assignedAt        DateTime         @default(now())
-  acceptedAt        DateTime?
-  unassignedAt      DateTime?
-  reason            String?
-  request           CollectionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  collector         CollectorProfile @relation(fields: [collectorProfileId], references: [id], onDelete: Restrict)
-  assignedBy        User             @relation("AssignmentAdmin", fields: [assignedByUserId], references: [id], onDelete: Restrict)
-
-  @@index([requestId, assignedAt])
-  @@index([collectorProfileId, status])
-}
-
-model CollectionStatusEvent {
-  id        String           @id @default(cuid())
-  requestId String
-  actorId   String?
-  fromStatus CollectionStatus?
-  toStatus  CollectionStatus
-  note      String?
-  createdAt DateTime         @default(now())
-  request   CollectionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  actor     User?            @relation("StatusActor", fields: [actorId], references: [id], onDelete: SetNull)
-
-  @@index([requestId, createdAt])
-}
-
-model CollectionWeight {
-  id                String            @id @default(cuid())
-  requestId         String            @unique
-  estimatedKg       Decimal           @db.Decimal(8, 2)
-  actualKg          Decimal?          @db.Decimal(8, 2)
-  verifiedKg        Decimal?          @db.Decimal(8, 2)
-  recordedByUserId  String?
-  verifiedByUserId  String?
-  verifiedFacilityId String?
-  recordedAt        DateTime?
-  verifiedAt        DateTime?
-  request           CollectionRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  recordedBy        User?             @relation("WeightRecorder", fields: [recordedByUserId], references: [id], onDelete: SetNull)
-  verifiedBy        User?             @relation("WeightVerifier", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
-  verifiedFacility  Facility?         @relation(fields: [verifiedFacilityId], references: [id], onDelete: SetNull)
-
-  @@index([verifiedFacilityId, verifiedAt])
-}
-
-model RewardWallet {
-  id            String              @id @default(cuid())
-  userId        String              @unique
-  pointsBalance Int                 @default(0)
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions  RewardTransaction[]
-  redemptions   RewardRedemption[]
-}
-
-model RewardTransaction {
-  id              String                @id @default(cuid())
-  walletId        String
-  requestId       String?
-  redemptionId    String?               @unique
-  type            RewardTransactionType
-  pointsDelta     Int
-  randValueCents  Int
-  idempotencyKey  String                @unique
-  description     String?
-  createdAt       DateTime              @default(now())
-  wallet          RewardWallet          @relation(fields: [walletId], references: [id], onDelete: Restrict)
-  request         CollectionRequest?    @relation(fields: [requestId], references: [id], onDelete: Restrict)
-  redemption      RewardRedemption?     @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
-
-  @@index([walletId, createdAt])
-}
-
-model RewardRedemption {
-  id           String            @id @default(cuid())
-  walletId     String
-  reference    String            @unique
-  type         RedemptionType    @default(REWARD)
-  meterNumber  String?
-  pointsCost   Int
-  valueCents   Int
-  status       RedemptionStatus  @default(REQUESTED)
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
-  wallet       RewardWallet      @relation(fields: [walletId], references: [id], onDelete: Restrict)
-  transaction  RewardTransaction?
-}
-
-model Notification {
-  id        String           @id @default(cuid())
-  userId    String
-  type      NotificationType
-  title     String
-  body      String
-  metadata  Json?
-  readAt    DateTime?
-  createdAt DateTime         @default(now())
-  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, readAt, createdAt])
-}
-
-model Report {
-  id                 String       @id @default(cuid())
-  reporterId         String
-  facilityId         String?
-  type               ReportType
-  status             ReportStatus @default(OPEN)
-  description        String
-  suggestedName      String?
-  suggestedAddress   String?
-  suggestedLatitude  Float?
-  suggestedLongitude Float?
-  suggestedAcceptedMaterials String[] @default([])
-  createdAt          DateTime     @default(now())
-  updatedAt          DateTime     @updatedAt
-  reporter           User         @relation(fields: [reporterId], references: [id], onDelete: Restrict)
-  facility           Facility?    @relation(fields: [facilityId], references: [id], onDelete: SetNull)
-
-  @@index([status, createdAt])
-}
-
-model AdminAuditLog {
-  id        String   @id @default(cuid())
-  adminId   String
-  entityType String
-  entityId  String
-  action    String
-  reason    String?
-  metadata  Json?
-  createdAt DateTime @default(now())
-  admin     User     @relation(fields: [adminId], references: [id], onDelete: Restrict)
-
-  @@index([entityType, entityId, createdAt])
-  @@index([adminId, createdAt])
 }

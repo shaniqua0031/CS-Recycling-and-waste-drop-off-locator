@@ -10,7 +10,7 @@
     "api:start": "npm start",
     "admin:create": "tsx src/scripts/create-admin.ts",
     "test:api": "tsx --test src/**/*.test.ts",
-    "prisma:generate": "prisma generate",
+    "prisma:generate": "node -e \"const fs=require('fs'); const path=require('path'); const targets=[path.join(process.cwd(),'node_modules','.prisma'), path.join(process.cwd(),'node_modules','@prisma','client')]; for (const target of targets) { if (fs.existsSync(target)) { try { fs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); console.log('Removed stale Prisma client: ' + target); } catch (error) { console.warn('Could not remove Prisma client cache: ' + target + ' -> ' + error.message); } } }\" && prisma generate",
     "prisma:validate": "prisma validate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts"
@@ -18,7 +18,7 @@
   "keywords": [],
   "type": "commonjs",
   "dependencies": {
-    "@prisma/client": "6.12.0",
+    "@prisma/client": "^6.12.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",

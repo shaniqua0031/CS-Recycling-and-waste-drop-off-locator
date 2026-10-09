@@ -7,7 +7,7 @@ const environmentSchema = z.object({
   AUTH_JWT_SECRET: z.string().min(32).optional(),
   AUTH_COOKIE_NAME: z.string().min(1).default("wastewise_session"),
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(72).default(12),
-  CLIENT_ORIGINS: z.string().default("http://localhost:3000,http://127.0.0.1:3000,https://cs-recycling-and-waste-drop-off-loc.vercel.app").transform((value) =>
+  CLIENT_ORIGINS: z.string().default("http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,https://cs-recycling-and-waste-drop-off-loc.vercel.app").transform((value) =>
     value.split(",").map((origin) => origin.trim()).filter(Boolean),
   ),
 });

@@ -54,21 +54,28 @@ export function matchesSessionToken(token: string, storedHash: string): boolean 
   return provided.length === stored.length && timingSafeEqual(provided, stored);
 }
 
-export function setSessionCookie(response: Response, token: string): void {
-  response.cookie(env.AUTH_COOKIE_NAME, token, {
+export function getSessionCookieOptions(options: { isProduction?: boolean; maxAge?: number } = {}): {
+  httpOnly: true;
+  secure: boolean;
+  sameSite: "lax" | "none";
+  path: string;
+  maxAge?: number;
+} {
+  const isProduction = options.isProduction ?? env.NODE_ENV === "production";
+
+  return {
     httpOnly: true,
-    secure: env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/api/v1",
-    maxAge: env.SESSION_TTL_HOURS * 60 * 60 * 1000,
-  });
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax",
+    path: "/",
+    maxAge: options.maxAge ?? env.SESSION_TTL_HOURS * 60 * 60 * 1000,
+  };
+}
+
+export function setSessionCookie(response: Response, token: string): void {
+  response.cookie(env.AUTH_COOKIE_NAME, token, getSessionCookieOptions());
 }
 
 export function clearSessionCookie(response: Response): void {
-  response.clearCookie(env.AUTH_COOKIE_NAME, {
-    httpOnly: true,
-    secure: env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/api/v1",
-  });
+  response.clearCookie(env.AUTH_COOKIE_NAME, getSessionCookieOptions({ maxAge: 0 }));
 }

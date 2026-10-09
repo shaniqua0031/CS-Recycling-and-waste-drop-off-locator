@@ -18,6 +18,7 @@ export type CollectorCandidateInput = {
   currentLongitude: number | null;
   lastLocationUpdatedAt: Date | null;
   activeWorkload: number;
+  qualifiedMaterialIds?: string[];
 };
 
 export type RankedCollectorCandidate = CollectorCandidateInput & {
@@ -26,6 +27,18 @@ export type RankedCollectorCandidate = CollectorCandidateInput & {
   locationSource: "CURRENT" | "SERVICE_CENTER";
 };
 
+export type CollectorCandidateRequirements = {
+  requiredMaterialId?: string;
+  now?: Date;
+};
+
+export type CollectionPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
+export function orderCollectionRequestsByPriority<T extends { priority: CollectionPriority; createdAt: Date }>(requests: T[]): T[] {
+  const priorityOrder: Record<CollectionPriority, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+  return [...requests].sort((left, right) => priorityOrder[left.priority] - priorityOrder[right.priority] || left.createdAt.getTime() - right.createdAt.getTime());
+}
+
 function hasCoordinates(point: { latitude: number | null; longitude: number | null }): point is Coordinates {
   return point.latitude !== null && point.longitude !== null && Number.isFinite(point.latitude) && Number.isFinite(point.longitude);
 }
@@ -33,14 +46,16 @@ function hasCoordinates(point: { latitude: number | null; longitude: number | nu
 export function rankCollectorCandidates(
   requestLocation: Coordinates,
   collectors: CollectorCandidateInput[],
-  now = new Date(),
+  requirements: CollectorCandidateRequirements = {},
 ): RankedCollectorCandidate[] {
+  const now = requirements.now ?? new Date();
   return collectors.flatMap((collector) => {
     if (
       collector.accountStatus !== "ACTIVE" ||
       collector.approvalStatus !== "APPROVED" ||
       collector.availability !== "AVAILABLE"
     ) return [];
+    if (requirements.requiredMaterialId && !collector.qualifiedMaterialIds?.includes(requirements.requiredMaterialId)) return [];
 
     const locationIsRecent = collector.lastLocationUpdatedAt !== null &&
       now.getTime() - collector.lastLocationUpdatedAt.getTime() <= RECENT_LOCATION_MAX_AGE_MS;
