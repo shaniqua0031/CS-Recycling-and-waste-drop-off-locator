@@ -64,11 +64,6 @@ const AdminOperationsMap = dynamic(() => import("./admin-collections-map").then(
   ssr: false,
   loading: () => <div className="grid h-[360px] place-items-center bg-gray-100 text-sm text-gray-500">Loading collection map…</div>,
 });
-const AssignmentMap = dynamic(() => import("./admin-collections-map").then((module) => module.AdminAssignmentMap), {
-  ssr: false,
-  loading: () => <div className="mb-4 grid h-[280px] place-items-center bg-gray-100 text-sm text-gray-500">Loading collector map…</div>,
-});
-
 export type AdminSection = "overview" | "incidents" | "users" | "collectors" | "facilities" | "requests" | "active" | "verification" | "rewards" | "redemptions" | "analytics" | "reports" | "notifications" | "audit";
 
 type AdminDashboardData = {
@@ -86,6 +81,7 @@ type AdminDashboardData = {
   rates: MaterialRate[];
   redemptions: AdminRedemption[];
   analytics: AdminAnalytics;
+  analyticsUnavailable: boolean;
   reports: AdminReport[];
   notifications: AdminNotification[];
   audit: AdminAuditEntry[];
@@ -109,12 +105,34 @@ const navItems: { id: AdminSection; label: string; icon: string }[] = [
 ];
 
 async function loadAdminDashboardData(): Promise<AdminDashboardData> {
-  const [overview, incidents, maintenanceWindows, sensors, simulatorEvents, users, collectors, facilities, requests, activeCollections, verification, rates, redemptions, analytics, reports, notifications, audit] = await Promise.all([
+  const [overview, incidents, maintenanceWindows, sensors, simulatorEvents, users, collectors, facilities, requests, activeCollections, verification, rates, redemptions, analyticsFallback, reports, notifications, audit] = await Promise.all([
     getAdminOverview(), getAdminIncidents(), getAdminMaintenanceWindows(), getAdminSensors(), getAdminSimulatorEvents(), getAdminUsers(), getAdminCollectors(), getAdminFacilities(), getAdminRequests(),
     getAdminActiveCollections(), getAdminVerificationQueue(), getMaterialRates(), getAdminRedemptions(),
-    getAdminAnalytics(), getAdminReports(), getAdminNotifications(), getAdminAudit(),
+    getAdminAnalytics()
+      .then((analytics) => ({ analytics, unavailable: false }))
+      .catch(() => ({
+        analytics: {
+          periodDays: 30,
+          totalVerifiedKg: 0,
+          materialTotals: [],
+          totalCollections: 0,
+          completedCollections: 0,
+          cancelledCollections: 0,
+          activeUsers: 0,
+          activeCollectors: 0,
+          registeredFacilities: 0,
+          pointsIssued: 0,
+          pointsRedeemed: 0,
+          rewardValueRand: 0,
+          averageResolutionTimeHours: null,
+          averageResponseTimeMinutes: null,
+          incidentVolume: 0,
+          facilityActivity: [],
+        } satisfies AdminAnalytics,
+        unavailable: true,
+      })), getAdminReports(), getAdminNotifications(), getAdminAudit(),
   ]);
-  return { overview, incidents, maintenanceWindows, sensors, simulatorEvents, users, collectors, facilities, requests, activeCollections, verification, rates, redemptions, analytics, reports, notifications, audit };
+  return { overview, incidents, maintenanceWindows, sensors, simulatorEvents, users, collectors, facilities, requests, activeCollections, verification, rates, redemptions, analytics: analyticsFallback.analytics, analyticsUnavailable: analyticsFallback.unavailable, reports, notifications, audit };
 }
 
 function formatStatus(value: string): string {
@@ -298,6 +316,7 @@ export default function AdminDashboard({ email, onLogout, initialSection = "over
   };
 
   const title = navItems.find((item) => item.id === section)?.label ?? "Overview";
+  const collectorStatusForAssignment = (collector: { approvalStatus: string; accountStatus: string; availability: string }) => collector.approvalStatus === "APPROVED" && collector.accountStatus === "ACTIVE" && collector.availability === "AVAILABLE";
   const filteredUsers = data?.users.filter((user) => `${user.displayName} ${user.email} ${user.role}`.toLowerCase().includes(userSearch.toLowerCase())) ?? [];
   const visibleRequests = (data?.requests ?? []).filter((request) => {
     const matchesStatus = requestStatusFilter === "ALL" || request.status === requestStatusFilter;
@@ -385,7 +404,7 @@ export default function AdminDashboard({ email, onLogout, initialSection = "over
             </>}
 
             {data && section === "collectors" && (data.collectors.length ? <DataTable headings={["Collector", "Approval", "Availability", "Service area / last known", "Vehicle", "Workload / performance", "Actions"]}>{data.collectors.map((collector) => <tr key={collector.id}>
-              <td className="px-4 py-3"><strong>{collector.displayName}</strong><p className="text-xs text-gray-500">{collector.email}</p></td><td className="px-4 py-3"><RequestStatus status={collector.approvalStatus} /></td><td className="px-4 py-3">{formatStatus(collector.availability)}<p className="text-xs text-gray-500">Account {formatStatus(collector.accountStatus)}</p></td><td className="px-4 py-3">{collector.serviceArea ?? "Not set"}<p className="text-xs text-gray-500">{collector.serviceRadiusKm ?? "?"} km radius</p><p className="mt-1 text-xs text-gray-700">{collector.currentLatitude !== null && collector.currentLongitude !== null ? `Last known ${collector.currentLatitude.toFixed(3)}, ${collector.currentLongitude.toFixed(3)}` : "No current coordinates"}</p><p className="text-[11px] text-gray-500">{collector.lastLocationUpdatedAt ? `Updated ${new Date(collector.lastLocationUpdatedAt).toLocaleString()}` : "Location not shared"}</p></td><td className="px-4 py-3">{collector.vehicleType ?? "Not provided"}<p className="text-xs text-gray-500">{collector.vehicleRegistration ?? ""}</p></td><td className="px-4 py-3">{collector.workload} active<p className="text-xs text-gray-500">{collector.completedJobs} complete · {collector.declinedJobs} declined</p><p className="text-xs text-gray-500">{collector.totalCollectedKg.toLocaleString()} kg · {collector.averageResponseTimeMinutes === null ? "No response history" : `${collector.averageResponseTimeMinutes.toFixed(1)} min avg response`}</p></td>
+              <td className="px-4 py-3"><strong>{collector.displayName}</strong><p className="text-xs text-gray-500">{collector.email}</p></td><td className="px-4 py-3"><RequestStatus status={collector.approvalStatus} /></td><td className="px-4 py-3"><div className="flex items-center gap-2"><span>{formatStatus(collector.availability)}</span>{collectorStatusForAssignment(collector) && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800">Ready</span>}</div><p className="text-xs text-gray-500">Account {formatStatus(collector.accountStatus)}</p></td><td className="px-4 py-3">{collector.serviceArea ?? "Not set"}<p className="text-xs text-gray-500">{collector.serviceRadiusKm ?? "?"} km radius</p><p className="mt-1 text-xs text-gray-700">{collector.currentLatitude !== null && collector.currentLongitude !== null ? `Last known ${collector.currentLatitude.toFixed(3)}, ${collector.currentLongitude.toFixed(3)}` : "No current coordinates"}</p><p className="text-[11px] text-gray-500">{collector.lastLocationUpdatedAt ? `Updated ${new Date(collector.lastLocationUpdatedAt).toLocaleString()}` : "Location not shared"}</p></td><td className="px-4 py-3">{collector.vehicleType ?? "Not provided"}<p className="text-xs text-gray-500">{collector.vehicleRegistration ?? ""}</p></td><td className="px-4 py-3">{collector.workload} active<p className="text-xs text-gray-500">{collector.completedJobs} complete · {collector.declinedJobs} declined</p><p className="text-xs text-gray-500">{collector.totalCollectedKg.toLocaleString()} kg · {collector.averageResponseTimeMinutes === null ? "No response history" : `${collector.averageResponseTimeMinutes.toFixed(1)} min avg response`}</p></td>
               <td className="space-y-2 px-4 py-3"><button onClick={() => requestReason("Message to collector", (message) => { if (message) void mutate(() => sendCollectorMessage(collector.id, message)); }, false)} className="block text-xs font-semibold text-emerald-800 underline">Message</button>{collector.approvalStatus === "PENDING" && <><button onClick={() => void mutate(() => decideCollector(collector.id, "APPROVED"))} className="block text-xs font-semibold text-emerald-800 underline">Approve</button><button onClick={() => requestReason("Reason to reject collector application", (reason) => { if (reason) void mutate(() => decideCollector(collector.id, "REJECTED", reason)); })} className="block text-xs font-semibold text-rose-700 underline">Reject</button></>}{collector.approvalStatus === "APPROVED" && <button onClick={() => requestReason("Reason to suspend collector account", (reason) => { if (reason) void mutate(() => setAdminUserStatus(collector.userId, "SUSPENDED", reason)); })} className="text-xs font-semibold text-rose-700 underline">Suspend account</button>}</td>
             </tr>)}</DataTable> : <EmptyState>No collector profiles are registered yet.</EmptyState>)}
 
@@ -395,15 +414,18 @@ export default function AdminDashboard({ email, onLogout, initialSection = "over
             </tr>)}</DataTable> : <EmptyState>No recycling facilities are registered yet.</EmptyState>)}
 
             {data && section === "requests" && <>
-              <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-gray-600">Select a waiting request to compare approved collectors. ETA uses a 20 km/h straight-line estimate.</p><div className="flex flex-wrap gap-2"><input aria-label="Search collection requests" value={requestSearch} onChange={(event) => setRequestSearch(event.target.value)} placeholder="Search recycler, material, location" className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm" /><select aria-label="Filter collection request status" value={requestStatusFilter} onChange={(event) => setRequestStatusFilter(event.target.value)} className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"><option value="ALL">All statuses</option>{["PENDING", "WAITING_FOR_ADMIN", "SCHEDULED_MAINTENANCE", "COLLECTOR_ASSIGNED", "COLLECTOR_ON_THE_WAY", "COLLECTOR_ARRIVED", "COLLECTING", "PAUSED", "VERIFICATION_PENDING", "VERIFIED", "COMPLETED", "CANCELLED", "REJECTED"].map((status) => <option key={status} value={status}>{formatStatus(status)}</option>)}</select></div></div>
+              <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-gray-600">Select a waiting request to view all collector statuses and assignment eligibility.</p><div className="flex flex-wrap gap-2"><input aria-label="Search collection requests" value={requestSearch} onChange={(event) => setRequestSearch(event.target.value)} placeholder="Search recycler, material, location" className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm" /><select aria-label="Filter collection request status" value={requestStatusFilter} onChange={(event) => setRequestStatusFilter(event.target.value)} className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"><option value="ALL">All statuses</option>{["PENDING", "WAITING_FOR_ADMIN", "SCHEDULED_MAINTENANCE", "COLLECTOR_ASSIGNED", "COLLECTOR_ON_THE_WAY", "COLLECTOR_ARRIVED", "COLLECTING", "PAUSED", "VERIFICATION_PENDING", "VERIFIED", "COMPLETED", "CANCELLED", "REJECTED"].map((status) => <option key={status} value={status}>{formatStatus(status)}</option>)}</select></div></div>
               {visibleRequests.length ? <DataTable headings={["Request", "Recycler", "Material", "Estimate", "Priority", "Requested", "Status", "Assignment / actions"]}>{visibleRequests.map((request) => <Fragment key={request.id}>
                 <tr key={request.id} className={`${["WAITING_FOR_ADMIN", "COLLECTOR_ASSIGNED"].includes(request.status) ? "cursor-pointer" : ""} hover:bg-gray-50`} onClick={() => { if (!["WAITING_FOR_ADMIN", "COLLECTOR_ASSIGNED"].includes(request.status)) return; setOpenRequestId(openRequestId === request.id ? "" : request.id); if (candidateRequestId !== request.id) void openCandidates(request.id); }}>
                   <td className="px-4 py-3 font-semibold"><details onClick={(event) => event.stopPropagation()}><summary className="cursor-pointer">{request.id.slice(-8).toUpperCase()}</summary><div className="mt-2 min-w-52 space-y-2 font-normal">{request.statusEvents.map((entry) => <p key={entry.id} className="text-xs text-gray-600">{new Date(entry.createdAt).toLocaleString()} · {formatStatus(entry.toStatus)}{entry.note ? ` · ${entry.note}` : ""}</p>)}{request.assignments.map((assignment) => <p key={assignment.id} className="text-xs text-gray-600">{new Date(assignment.assignedAt ?? request.createdAt).toLocaleString()} · {formatStatus(assignment.status)} · {assignment.collector.user.recyclerProfile?.displayName ?? assignment.collector.user.email}{assignment.reason ? ` · ${assignment.reason}` : ""}</p>)}</div></details></td><td className="px-4 py-3">{request.requester?.recyclerProfile?.displayName ?? request.requester?.email ?? "Recycler"}<p className="text-xs text-gray-500">{request.pickupAddress}</p></td><td className="px-4 py-3">{request.material.name}</td><td className="px-4 py-3">{Number(request.estimatedKg).toLocaleString()} kg</td><td className="px-4 py-3"><select aria-label={`Priority for request ${request.id.slice(-8)}`} disabled={["VERIFIED", "COMPLETED", "CANCELLED", "REJECTED"].includes(request.status)} value={request.priority ?? "MEDIUM"} onClick={(event) => event.stopPropagation()} onChange={(event) => { const priority = event.target.value as CollectionPriority; requestReason(`Reason for changing priority to ${priority}`, (reason) => { if (reason) void mutate(() => updateCollectionPriority(request.id, priority, reason)); }); }} className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs font-semibold disabled:opacity-50"><option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="HIGH">High</option><option value="CRITICAL">Critical</option></select></td><td className="px-4 py-3">{new Date(request.requestedFor).toLocaleString()}</td><td className="px-4 py-3"><RequestStatus status={request.status} /></td><td className="space-y-2 px-4 py-3">{request.destinationFacility?.name ?? "No destination"}<p className="text-xs text-gray-600">{request.assignments.find((assignment) => assignment.status === "ASSIGNED" || assignment.status === "ACCEPTED")?.collector.user.recyclerProfile?.displayName ?? "Unassigned"}</p>{!["VERIFIED", "COMPLETED", "CANCELLED", "REJECTED"].includes(request.status) && <button disabled={isWorking} onClick={(event) => { event.stopPropagation(); requestReason("Reason for cancelling this collection request", (reason) => { if (reason) void mutate(() => cancelAdminCollectionRequest(request.id, reason)); }); }} className="text-xs font-semibold text-rose-700 underline">Cancel request</button>}</td>
                 </tr>
                 {openRequestId === request.id && <tr key={`${request.id}-candidates`}><td colSpan={8} className="bg-gray-50 px-4 py-4">
                   {request.assignments.some((assignment) => assignment.status === "DECLINED") && <div className="mb-4 rounded-md border border-rose-200 bg-rose-50 p-3"><h3 className="text-sm font-semibold text-rose-900">Previous Collector declines</h3>{request.assignments.filter((assignment) => assignment.status === "DECLINED").map((assignment) => <p key={assignment.id} className="mt-2 text-sm text-rose-900">{assignment.collector.user.recyclerProfile?.displayName ?? assignment.collector.user.email}: {assignment.reason ?? "No reason recorded"}</p>)}</div>}
-                  <h3 className="font-semibold">Eligible collectors</h3>{candidateRequestId !== request.id ? <p className="mt-2 text-sm text-gray-500">Loading candidates…</p> : candidates.length ? <><AssignmentMap request={request} candidates={candidates} /><div className="grid gap-2 md:grid-cols-2">{candidates.map((candidate) => <article key={candidate.profileId} className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-white p-3"><div><p className="font-semibold">{candidate.displayName ?? candidate.email}</p><p className="text-xs text-gray-500">{candidate.distanceKm.toFixed(1)} km · approx. {candidate.etaMinutes} min · {candidate.activeWorkload} active pickups</p><p className="text-[11px] text-gray-500">{candidate.locationSource === "CURRENT" ? "Recent location" : "Service center"} · estimate, not live routing</p></div><button disabled={isWorking} onClick={(event) => { event.stopPropagation(); void mutate(() => assignCollector(request.id, candidate.profileId)); }} className="shrink-0 rounded-md bg-emerald-800 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-900">Assign</button></article>)}</div></> : <p className="mt-2 text-sm text-gray-500">No eligible collectors have a valid service location and availability.</p>}</td></tr>}
-              </Fragment>)}</DataTable> : <EmptyState>No collection requests match these filters.</EmptyState>}
+                  <h3 className="font-semibold">All collectors</h3>{candidateRequestId !== request.id ? <p className="mt-2 text-sm text-gray-500">Loading collectors…</p> : <div className="grid gap-2 md:grid-cols-2">{data.collectors.map((collector) => {
+                    const eligible = candidates.some((candidate) => candidate.profileId === collector.id);
+                    return <article key={collector.id} className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-white p-3"><div><p className="font-semibold">{collector.displayName}</p><p className="text-xs text-gray-500">{collector.email}</p><p className="text-xs text-gray-600">Availability: {formatStatus(collector.availability)} · Account: {formatStatus(collector.accountStatus)} · Approval: {formatStatus(collector.approvalStatus)}</p>{eligible ? <p className="text-[11px] text-emerald-700">Eligible for this request</p> : <p className="text-[11px] text-gray-500">Does not meet this request’s assignment requirements</p>}</div><button disabled={isWorking || !eligible} onClick={(event) => { event.stopPropagation(); if (!eligible) return; void mutate(() => assignCollector(request.id, collector.id)); }} className="shrink-0 rounded-md bg-emerald-800 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-gray-300">{eligible ? "Assign" : "Not eligible"}</button></article>;
+                    })}</div>}</td></tr>}
+                  </Fragment>)}</DataTable> : <EmptyState>No collection requests match these filters.</EmptyState>}
             </>}
 
             {data && section === "active" && <>
@@ -439,6 +461,7 @@ export default function AdminDashboard({ email, onLogout, initialSection = "over
 
             {data && section === "analytics" && <>
               <p className="text-sm text-gray-600">Persisted operational activity · last {data.analytics.periodDays} days</p>
+              {data.analyticsUnavailable && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Analytics data is temporarily unavailable. Other admin sections remain current.</p>}
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[
                 ["Verified recycled", `${data.analytics.totalVerifiedKg.toLocaleString()} kg`], ["Requests", data.analytics.totalCollections], ["Completed", data.analytics.completedCollections], ["Cancelled", data.analytics.cancelledCollections], ["Average resolution", data.analytics.averageResolutionTimeHours === null ? "—" : `${data.analytics.averageResolutionTimeHours.toFixed(1)} h`], ["Average response", data.analytics.averageResponseTimeMinutes === null ? "—" : `${data.analytics.averageResponseTimeMinutes.toFixed(1)} min`], ["Incidents", data.analytics.incidentVolume], ["Points issued", data.analytics.pointsIssued.toLocaleString()], ["Active collectors", data.analytics.activeCollectors], ["Facilities", data.analytics.registeredFacilities],
               ].map(([label, value]) => <article key={label} className="rounded-lg border border-gray-200 bg-white p-4"><p className="text-sm text-gray-500">{label}</p><p className="mt-2 font-display text-xl font-extrabold">{value}</p></article>)}</div>

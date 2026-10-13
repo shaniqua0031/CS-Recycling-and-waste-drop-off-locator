@@ -1,0 +1,241 @@
+WASTEWISE SYSTEM DOCUMENTATION
+==============================
+
+1. SYSTEM PURPOSE AND STATUS
+
+WasteWise is a web application for finding recycling and waste facilities and
+coordinating material collections. It supports facility discovery, collection
+requests, collector assignment and pickup workflows, facility verification,
+recycling rewards, reporting, and Admin operations.
+
+The repository contains a working Next.js client and Express API with database-
+backed, role-specific workflows. The project contract also describes product
+scope and future roadmap items; those descriptions are not proof that a feature
+is currently implemented. The sensor and simulator controls are demonstrations
+and do not integrate with physical sensors.
+
+2. ARCHITECTURE AND DATA FLOW
+
+The client is a Next.js App Router application in client/. It renders the user
+interface and calls the API through shared functions in client/lib/. The API
+base path is /api/v1. Browser requests include credentials so the session cookie
+is sent to the API.
+
+The Express application is assembled in server/src/app.ts and started through
+server/index.js. Prisma Client connects the API to PostgreSQL using
+DATABASE_URL. API feature modules validate requests, enforce authentication and
+role checks, execute business workflows, and return JSON responses. Database
+schema and migrations are in server/prisma/.
+
+Normal flow:
+1. A user signs up or signs in through the API.
+2. The API creates a session and sets an HttpOnly cookie.
+3. The client calls role-specific API routes with that cookie.
+4. The API checks session validity and the user's role or facility membership.
+5. The API reads or updates PostgreSQL through Prisma and returns JSON.
+
+3. TECHNOLOGY AND REPOSITORY GUIDE
+
+- client/: Next.js 16, React 19, TypeScript, Tailwind CSS 4, Leaflet, and
+  React-Leaflet. The primary interactive workflow is coordinated in
+  client/app/page.tsx; reusable workflow screens are in client/app/.
+- client/lib/: client-side authentication and API request helpers.
+- server/: Express 5, TypeScript, Prisma 6, PostgreSQL, Zod validation, and
+  cookie/JWT authentication.
+- server/src/features/auth/: registration, login, session, and auth security.
+- server/src/features/collections/: Recycler, Collector, Facility, collection,
+  report, rewards, and notification operations.
+- server/src/features/admin/: Admin-only operations and simulator logic.
+- server/src/middleware/: authentication, validation, trusted-origin, and error
+  handling middleware.
+- server/prisma/: Prisma schema, migrations, and seed data.
+- prompts/: implementation prompts and task specifications.
+- PROJECT_CONTRACT.md: product scope, staged delivery plan, and API contract
+  notes. Check implementation before treating roadmap content as current.
+
+4. ROLES AND WORKFLOWS
+
+RECYCLER
+Recycler users search or browse available facilities, manage their profile,
+create and cancel collection requests, receive notifications, submit reports,
+track collections, and view rewards or redemption records. A collection moves
+through assignment, pickup, collection-weight recording, facility verification,
+and completion. Rewards are tied to verified material weights.
+
+COLLECTOR
+Collectors maintain availability, service area, location, and qualified
+materials. Approved, active, available collectors can receive eligible jobs.
+They can accept or decline assignments, update pickup progress, record collected
+weights, and view their own dashboard, work history, and notifications. The API
+scopes collector job and notification access to the signed-in Collector.
+
+FACILITY
+Facility users belong to facilities through memberships with OWNER, MANAGER,
+or STAFF permissions. They manage facility information and operations, accepted
+materials, opening hours, and capacity; receive or reject deliveries; and verify
+collected weights. Settings that require elevated facility access are limited
+to owners and managers. Facility approval and suspension are managed by Admins.
+
+ADMIN
+Admin users are provisioned privately, not through public signup. Admin tools
+cover account and facility/collector approvals, request priority and assignment,
+incidents, maintenance windows, reports, reward rates and redemptions,
+notifications, audit records, and operational analytics. Admin routes require
+an authenticated ADMIN role.
+
+5. CORE DATA
+
+The authoritative relational model is server/prisma/schema.prisma. Principal
+records include:
+- User, Session, and role-specific RecyclerProfile and CollectorProfile.
+- Facility, FacilityMembership, FacilityMaterial, and FacilityOpeningHour.
+- Material and MaterialRewardRate.
+- CollectionRequest, CollectionAssignment, CollectionStatusEvent,
+  CollectionWeight, and CollectionMaterialWeight.
+- Notification, Report, Incident, and reward wallet/transaction/redemption
+  records.
+- Admin audit and simulator events, facility sensor events, and maintenance
+  windows.
+
+Facilities accept one or more materials and can be linked to material-specific
+capacity. Collection requests identify the requester, material, pickup
+coordinates and address, requested time, status, and optional destination
+facility. Assignment and status history are separate records. Weight recording
+supports material lines; facility verification is used for final weight and
+reward accounting.
+
+6. API OVERVIEW
+
+Base prefix: /api/v1
+Successful responses generally use a { "data": ... } envelope. Errors use an
+error object with a code and message. Unknown routes return NOT_FOUND.
+
+- GET /api/v1/health: API health response.
+- /api/v1/auth: registration, login, current session, and logout.
+- /api/v1/users: authenticated current-user and Recycler profile/password
+  operations.
+- /api/v1/collections: authenticated facility discovery; collection request
+  creation, listing, cancellation, assignment response, pickup progress, and
+  weight workflows; Collector and Facility dashboards; reports; notifications;
+  rewards; and buffered collection events.
+- /api/v1/admin: Admin-only user and account controls, facility and collector
+  administration, collection assignment and priority, incidents, maintenance,
+  reports, rewards, simulator/sensor demonstrations, audit, and analytics.
+
+Routes under collections and admin apply authentication middleware. Admin
+routes additionally require the ADMIN role. Other operations apply role checks
+and, for facility actions, facility membership and membership-role checks.
+Authentication returns an HttpOnly session cookie. Cookies use Secure and
+SameSite=None in production, and SameSite=Lax for local development. The
+configured session lifetime defaults to 12 hours.
+
+CORS allows credentials and restricts browser origins using CORS_ORIGINS, with
+CLIENT_ORIGINS as a backwards-compatible alias. Only explicitly trusted origins
+and recognized project Vercel deployment origins are accepted. JSON request
+bodies are limited to 1 MB. Authentication attempts are rate-limited in
+process memory.
+
+7. CONFIGURATION
+
+Server configuration is parsed in server/src/config/env.ts. Set these in the
+server environment as applicable:
+- DATABASE_URL: PostgreSQL connection string. Required to start the API.
+- AUTH_JWT_SECRET: at least 32 characters when configured; required in
+  production. Keep it private.
+- PORT: API port; defaults to 5000.
+- NODE_ENV: development, test, or production.
+- AUTH_COOKIE_NAME: session cookie name; defaults to wastewise_session.
+- SESSION_TTL_HOURS: session lifetime from 1 to 72 hours; defaults to 12.
+- CORS_ORIGINS: comma-separated trusted frontend origins. CLIENT_ORIGINS is
+  accepted as a legacy alias.
+- ADMIN_EMAIL and ADMIN_PASSWORD: required only by the Admin provisioning
+  command. Keep private and do not commit them.
+
+The client reads NEXT_PUBLIC_API_BASE_URL as the API URL, including /api/v1.
+NEXT_PUBLIC_API_URL is accepted for compatibility. In local development the
+default is http://localhost:5000/api/v1. Production requires an absolute HTTPS
+URL for a non-local host. This NEXT_PUBLIC_ value is embedded at build time;
+rebuild and redeploy the client after changing it. Never put database
+credentials, signing secrets, or other private values in NEXT_PUBLIC_ variables.
+
+Do not commit .env files or secret values. The repository does not currently
+include server/.env.example; use this section and server/README.md as a guide,
+and confirm variable names against server/src/config/env.ts before deployment.
+
+8. LOCAL DEVELOPMENT, DATABASE, AND TESTS
+
+Prerequisites: Node.js/npm and a PostgreSQL database reachable by the server.
+Install dependencies separately in client/ and server/.
+
+Server setup, from server/:
+1. Create a private .env containing DATABASE_URL and AUTH_JWT_SECRET.
+2. Run npm run prisma:validate.
+3. Run npm run prisma:generate.
+4. Run npm run prisma:migrate:dev to apply development migrations.
+5. Run npm run prisma:seed to seed material categories and reward rates.
+6. Optionally configure ADMIN_EMAIL and ADMIN_PASSWORD privately, then run
+   npm run admin:create to provision the dedicated Admin account.
+7. Set CLIENT_ORIGINS or CORS_ORIGINS to the exact local client origin and run
+   npm run api:dev.
+
+Client setup, from client/:
+1. Install dependencies with npm install.
+2. Set NEXT_PUBLIC_API_BASE_URL if the API is not at its local default.
+3. Run npm run dev and open http://localhost:3000.
+
+Available checks:
+- Client: npm run lint and npm run build.
+- Server: npm run test:api and npm run api:build.
+- Server schema validation: npm run prisma:validate.
+
+The development migration command modifies the configured database. The seed
+command inserts initial data. The Admin command creates or updates the Admin
+account associated with ADMIN_EMAIL; use a dedicated Admin identity.
+
+9. PRODUCTION AND OPERATIONS
+
+The documented Render API build command is npm ci && npm run api:build; its
+start command is npm start. Configure DATABASE_URL and AUTH_JWT_SECRET in the
+hosting provider, apply migrations using npx prisma migrate deploy, and set
+trusted browser origins with CORS_ORIGINS. Provision the Admin privately with
+ADMIN_EMAIL and ADMIN_PASSWORD and npm run admin:create.
+
+Build/deploy the client with NEXT_PUBLIC_API_BASE_URL set to the public API URL
+ending in /api/v1. The API must allow the exact client origin. Production
+session cookies require HTTPS. Do not expose server credentials to the client.
+
+The API process checks for due buffered collection events and facility
+maintenance work every two seconds. These in-process timers are not a
+distributed job queue; account for multiple API instances and duplicate work
+when changing deployment topology.
+
+10. SECURITY AND LIMITATIONS
+
+- Passwords are hashed; sessions use signed JWTs in HttpOnly cookies and a
+  database-backed session record. Session tokens are hashed for storage.
+- API authentication and role checks are enforced on the server. Recycler,
+  Collector, Facility, and Admin operations have distinct authorization rules.
+- Restrict CORS_ORIGINS to trusted browser origins. Credentialed requests must
+  not be allowed from arbitrary origins.
+- Never commit .env values or publish database/API secrets. NEXT_PUBLIC_ values
+  are visible to browser users.
+- Login rate limiting uses in-memory storage. It is not shared across API
+  instances; use shared storage before horizontally scaling authentication.
+- Simulator and sensor events are demonstration data, not physical telemetry.
+  There is no proof-photo storage integration.
+- API startup requires a PostgreSQL URL. A limited demo-store fallback exists
+  in authentication code, but it is not a full offline or database-free mode.
+- Some initial product roadmap items may not be present in the implementation;
+  inspect source before relying on a feature described only in the contract.
+
+11. MAINTENANCE
+
+Update this document when the implementation changes. Check, at minimum,
+PROJECT_CONTRACT.md; client/package.json; client/app/page.tsx and client/lib/;
+server/README.md and server/package.json; server/index.js;
+server/src/app.ts; server/src/config/env.ts; server/src/features/ routes and
+middleware; server/prisma/schema.prisma; and server/prisma/migrations/.
+
+This document is a guide, not a substitute for the source code or migration
+history. Verify deployment settings and API behavior against the current source
+before making operational changes.

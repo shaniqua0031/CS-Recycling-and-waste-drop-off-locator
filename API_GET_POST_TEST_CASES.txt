@@ -1,0 +1,195 @@
+WASTEWISE API TEST CASES: GET AND POST
+======================================
+
+1. PURPOSE AND TEST ENVIRONMENT
+
+This document is a manual developer checklist for representative GET and POST
+requests to the WasteWise Express API. It complements, but does not replace, the
+automated server tests.
+
+Local API base URL: http://localhost:5000/api/v1
+Health check:       GET http://localhost:5000/api/v1/health
+
+Start the API from server/ with npm run api:dev. The API process requires
+DATABASE_URL. Collection and facility cases use PostgreSQL and require migrated
+test data. Run database-writing cases only against a development/test database,
+never production.
+
+Run authenticated requests as an account with the role stated in the test.
+Authentication uses an HttpOnly session cookie. The examples use curl.exe,
+which is available in current Windows installations. Run the examples in
+Windows PowerShell; the single-quoted JSON bodies rely on PowerShell quoting.
+Replace every value in angle brackets before running a command. Do not put
+real passwords or secrets in shared scripts or source control.
+
+Successful API responses use a JSON data property. Error responses use an
+error object with code and message. Validation errors return status 400 and
+code VALIDATION_ERROR. The API returns 401 for missing/invalid sessions and
+403 when a valid user is not allowed to perform an operation.
+
+2. TEST CASE FORMAT
+
+For each case record:
+- ID and purpose
+- Method and path
+- Authentication and required role
+- Request/query data
+- Steps
+- Expected HTTP status and response fields
+- Database effects and cleanup
+
+3. GET TEST CASES
+
+GET-01: Health endpoint responds
+Method/path: GET /api/v1/health
+Authentication: None
+Data/setup: API process running; database is not queried by this route.
+Steps: Send GET to the health endpoint.
+Expected: HTTP 200; JSON equals {"data":{"status":"ok"}}.
+Cleanup: None.
+
+Example:
+  curl.exe -i http://localhost:5000/api/v1/health
+
+GET-02: Unknown GET path returns standard not-found response
+Method/path: GET /api/v1/not-a-real-route
+Authentication: None
+Data/setup: API process running.
+Steps: Request the unknown path.
+Expected: HTTP 404; error.code is NOT_FOUND and the message says the
+requested API route was not found.
+Cleanup: None.
+
+GET-03: Facility search returns available facilities
+Method/path: GET /api/v1/collections/facilities
+Authentication: Signed-in user; this route is behind collection authentication.
+Data/setup: A migrated database. For a non-empty result, add or use an
+approved, non-suspended facility with accepted materials.
+Steps: Request the route with the saved session cookie. Optionally filter by
+material, text query, opening status, and paired latitude/longitude.
+Expected: HTTP 200 and data is an array. Each result includes facility
+identity, address, coordinates, acceptedMaterials, openingHours, status, and
+distanceKm. The array may be empty if no facility matches.
+Negative check: Send latitude without longitude. Expected HTTP 400 and
+error.code VALIDATION_ERROR.
+Cleanup: None for reads.
+
+Example, after saving a valid session in api-test-cookies.txt:
+  curl.exe -i -b api-test-cookies.txt --get "http://localhost:5000/api/v1/collections/facilities" --data-urlencode "material=Plastic" --data-urlencode "latitude=-26.2" --data-urlencode "longitude=28.0"
+
+GET-04: Collection list is scoped to the signed-in role
+Method/path: GET /api/v1/collections
+Authentication: Required.
+Data/setup: Migrated database and accounts/requests for the roles under test.
+Steps: Call the route as a Recycler, Collector, and Facility user.
+Expected: HTTP 200 and data is an array. Recycler sees only their requests;
+Collector sees requests assigned to them; Facility sees requests destined for
+facilities where they have membership. Admin is rejected with HTTP 403 and
+error.code FORBIDDEN; Admin uses the separate Admin collection views.
+Negative check: Omit the session cookie. Expected HTTP 401 and
+error.code UNAUTHENTICATED.
+Cleanup: None for reads.
+
+4. POST TEST CASES
+
+POST-01: Register a Recycler and receive a session cookie
+Method/path: POST /api/v1/auth/register
+Authentication: None; send Origin: http://localhost:3000.
+Data/setup: A unique email address and a password meeting the current auth
+schema (12-128 characters, at most 72 UTF-8 bytes). Registration creates an
+account; use a development/test database or the local auth demo fallback.
+Steps: Send a valid JSON request. Save the returned cookie with curl.exe -c.
+Expected: HTTP 201; data.user has the new email and role RECYCLER; response
+includes the HttpOnly session cookie.
+Negative check: Try role ADMIN. Expected HTTP 400 and
+error.code VALIDATION_ERROR; public registration does not permit Admin.
+Cleanup: Delete the test account and related test data using an approved
+development cleanup procedure. Do not delete shared or production accounts.
+
+Example request (replace the placeholders first):
+  curl.exe -i -c api-test-cookies.txt -b api-test-cookies.txt -H "Origin: http://localhost:3000" -H "Content-Type: application/json" --data-raw '{"displayName":"API Test","email":"<UNIQUE_TEST_EMAIL>","password":"<TEST_PASSWORD>"}' http://localhost:5000/api/v1/auth/register
+
+POST-02: Create a collection request as a Recycler
+Method/path: POST /api/v1/collections
+Authentication: Signed-in RECYCLER; send the cookie saved after registration
+or login.
+Data/setup: Migrated database; an active material and an approved,
+non-suspended destination facility that accepts that material. Use a future
+ISO-8601 requestedFor value and valid pickup coordinates.
+Steps: Send a JSON body with material, destinationFacilityId, estimatedKg,
+requestedFor, pickupAddress, pickupLatitude, and pickupLongitude. notes is
+optional.
+Expected: HTTP 201; data contains the new request id and status. The initial
+status may reflect scheduled facility maintenance or dispatch availability;
+do not assert one fixed status for every fixture.
+Database effect: Creates a collection request, weight record, and status event;
+notifications and automatic dispatch may also occur.
+Cleanup: Cancel/delete only test-created records using the project's supported
+development procedure.
+
+Example request (replace facility ID and future date with valid test values):
+  curl.exe -i -b api-test-cookies.txt -H "Content-Type: application/json" --data-raw '{"material":"Plastic","destinationFacilityId":"<APPROVED_FACILITY_ID>","estimatedKg":10,"requestedFor":"<FUTURE_ISO_8601_DATETIME>","pickupAddress":"12 Example Road, Johannesburg","pickupLatitude":-26.2,"pickupLongitude":28.0}' http://localhost:5000/api/v1/collections
+
+POST-03: Reject an invalid collection request body
+Method/path: POST /api/v1/collections
+Authentication: Signed-in RECYCLER.
+Data/setup: Valid session; no database fixture is needed if the body fails
+schema validation before business processing.
+Steps: Omit a required field, use estimatedKg 0, or use an out-of-range
+coordinate.
+Expected: HTTP 400; error.code is VALIDATION_ERROR and no request is created.
+Cleanup: None.
+
+POST-04: Reject unsupported material or unavailable destination
+Method/path: POST /api/v1/collections
+Authentication: Signed-in RECYCLER.
+Data/setup: Valid body. For the material case, choose a name not present among
+active materials. For the destination case, use an unapproved, suspended, or
+nonexistent facility, or one that does not accept the chosen material.
+Expected: HTTP 400; error.code is UNKNOWN_MATERIAL or FACILITY_UNAVAILABLE,
+respectively. No collection request is created.
+Cleanup: None.
+
+POST-05: Enforce authentication and role on collection creation
+Method/path: POST /api/v1/collections
+Authentication: First omit the cookie; then repeat with a valid non-Recycler
+session such as Collector or Facility.
+Expected: Missing/invalid session returns HTTP 401 with
+error.code UNAUTHENTICATED. A signed-in non-Recycler returns HTTP 403 with
+error.code FORBIDDEN. No request is created.
+Cleanup: None.
+
+POST-06: Reject a report that lacks required issue location
+Method/path: POST /api/v1/collections/reports
+Authentication: Signed-in RECYCLER.
+Data/setup: Valid session.
+Steps: Submit type HAZARDOUS_WASTE and a description, but no facilityId or
+coordinates.
+Expected: HTTP 400 and error.code VALIDATION_ERROR. No report is created.
+Cleanup: None.
+
+5. EXISTING AUTOMATED CHECKS
+
+From server/ run:
+  npm run test:api
+
+This runs the existing Node test suite, including health/unknown-route checks,
+auth and CORS checks, and collection/auth schema tests. The manual database-
+backed cases above are a checklist; they are not claimed to have been run by
+this document.
+
+Optional server type/build check, from server/:
+  npm run api:build
+
+6. SAFETY AND CLEANUP
+
+- Use a dedicated local/test database and test-only accounts.
+- Do not run write cases against production. Collection creation can trigger
+  notifications and automatic dispatch workflows.
+- Use a unique email per registration run. Keep test credentials private.
+- Use seeded or explicitly prepared facility/material records for collection
+  tests; do not assume an arbitrary facility is approved or accepts Plastic.
+- Record created IDs and clean up only records created for the test, following
+  the team's database cleanup procedure. Do not manually delete shared records.
+- Test the route's actual response and database effect; a successful HTTP
+  response alone does not verify role scoping or persistence.

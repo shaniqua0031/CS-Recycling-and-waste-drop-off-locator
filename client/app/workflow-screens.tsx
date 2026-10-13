@@ -118,8 +118,7 @@ export function CollectionRequestScreen({ onBack, onCreate, onCreateBufferedEven
   const [dismissedBufferId, setDismissedBufferId] = useState("");
   const [useEventBuffer, setUseEventBuffer] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(0);
-  const [latitude, setLatitude] = useState("");
-  const [longitude, setLongitude] = useState("");
+  const [pickupCoordinates, setPickupCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -173,25 +172,39 @@ export function CollectionRequestScreen({ onBack, onCreate, onCreateBufferedEven
     }
   };
 
+  const selectedFacility = facilities.find((facility) => facility.id === destinationFacilityId) ?? null;
+  const todayString = new Date().toISOString().split("T")[0];
+
   const useCurrentLocation = () => {
     if (!navigator.geolocation) {
-      setError("This browser cannot provide your location. Enter pickup coordinates below.");
+      setError("This browser cannot provide your location. The system will use the selected facility location as a fallback.");
       return;
     }
     navigator.geolocation.getCurrentPosition(({ coords }) => {
-      setLatitude(String(coords.latitude));
-      setLongitude(String(coords.longitude));
+      setPickupCoordinates({ latitude: coords.latitude, longitude: coords.longitude });
       setError("");
-    }, () => setError("Location permission was unavailable. Enter pickup coordinates below."), { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+    }, () => {
+      const selectedFacility = facilities.find((facility) => facility.id === destinationFacilityId);
+      if (selectedFacility) {
+        setPickupCoordinates({ latitude: selectedFacility.latitude, longitude: selectedFacility.longitude });
+        setError("Location permission was unavailable, so the selected facility coordinates were used automatically.");
+        return;
+      }
+      setError("Location permission was unavailable. Please allow location access or choose a facility to continue.");
+    }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const estimatedWeightKg = Number(estimatedWeight);
-    const pickupLatitude = Number(latitude);
-    const pickupLongitude = Number(longitude);
-    if (!destinationFacilityId || !Number.isFinite(estimatedWeightKg) || estimatedWeightKg <= 0 || !Number.isFinite(pickupLatitude) || !Number.isFinite(pickupLongitude)) {
-      setError("Choose an approved facility and provide a valid weight and pickup location.");
+    const scheduledFor = new Date(`${preferredDate}T${preferredTime || "09:00"}`);
+    const effectivePickup = pickupCoordinates ?? (selectedFacility ? { latitude: selectedFacility.latitude, longitude: selectedFacility.longitude } : null);
+    if (!destinationFacilityId || !Number.isFinite(estimatedWeightKg) || estimatedWeightKg <= 0 || !preferredDate || Number.isNaN(scheduledFor.getTime()) || scheduledFor < new Date(`${todayString}T00:00:00`)) {
+      setError("Choose an approved facility, select today or a future date, and provide a valid weight.");
+      return;
+    }
+    if (!effectivePickup) {
+      setError("Choose an approved facility and allow location access to continue.");
       return;
     }
     setIsSubmitting(true);
@@ -202,9 +215,9 @@ export function CollectionRequestScreen({ onBack, onCreate, onCreateBufferedEven
         destinationFacilityId,
         pickupAddress: pickupAddress.trim(),
         estimatedKg: estimatedWeightKg,
-        requestedFor: new Date(`${preferredDate}T${preferredTime || "09:00"}`).toISOString(),
-        pickupLatitude,
-        pickupLongitude,
+        requestedFor: scheduledFor.toISOString(),
+        pickupLatitude: effectivePickup.latitude,
+        pickupLongitude: effectivePickup.longitude,
         notes: notes.trim() || undefined,
       };
       if (useEventBuffer) {
@@ -251,22 +264,18 @@ export function CollectionRequestScreen({ onBack, onCreate, onCreateBufferedEven
         </label>
         <label className="block text-sm font-medium text-gray-800">
           Preferred collection date
-          <input required type="date" value={preferredDate} onChange={(event) => setPreferredDate(event.target.value)} className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2.5" />
+          <input required type="date" min={todayString} value={preferredDate} onChange={(event) => setPreferredDate(event.target.value)} className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2.5" />
         </label>
         <label className="block text-sm font-medium text-gray-800">Preferred time
           <input required type="time" value={preferredTime} onChange={(event) => setPreferredTime(event.target.value)} className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2.5" />
         </label>
+        <div className="rounded-lg border border-green-100 bg-green-50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium text-gray-800">Pickup location</p><button type="button" onClick={useCurrentLocation} className="text-sm font-semibold text-green-700 underline">Use current location</button></div>
+          <p className="mt-1 text-xs text-gray-600">The system automatically uses your current location when available, or falls back to the selected facility location so you do not need to type coordinates manually.</p>
+        </div>
         <label className="block text-sm font-medium text-gray-800">Additional notes
           <textarea maxLength={1000} rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2.5" placeholder="Access instructions or collection details" />
         </label>
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium text-gray-800">Pickup coordinates</p><button type="button" onClick={useCurrentLocation} className="text-sm font-semibold text-green-700 underline">Use current location</button></div>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="text-xs font-medium text-gray-700">Latitude<input required type="number" min="-90" max="90" step="any" value={latitude} onChange={(event) => setLatitude(event.target.value)} className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm" /></label>
-            <label className="text-xs font-medium text-gray-700">Longitude<input required type="number" min="-180" max="180" step="any" value={longitude} onChange={(event) => setLongitude(event.target.value)} className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm" /></label>
-          </div>
-          <p className="text-xs text-gray-500">Your location is used to match nearby collectors. Browser permission is optional; coordinates can be entered manually.</p>
-        </div>
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         {activeBufferEvent?.status === "OPEN" && <div role="status" className="flex items-center justify-between gap-3 rounded-md bg-amber-50 p-3 text-sm text-amber-900"><span>Pickup pending. You can cancel during the {secondsRemaining}-second buffer.</span><button type="button" disabled={isSubmitting} onClick={() => void cancelBuffer()} className="shrink-0 font-semibold underline">Cancel</button></div>}
         {success && <p role="status" className="text-sm font-medium text-green-700">Pickup Pending. Your request is waiting for Admin assignment and can be tracked from your dashboard.</p>}
