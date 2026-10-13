@@ -50,7 +50,7 @@ test("maintenance schedules and sensor events have bounded server inputs", () =>
 test("simulator actions require the backend entity inputs they mutate", () => {
   assert.equal(simulatorActionSchema.safeParse({ action: "RESET_SIMULATION" }).success, true);
   assert.equal(simulatorActionSchema.safeParse({ action: "COLLECTOR_ACCEPT" }).success, false);
-  assert.equal(simulatorActionSchema.safeParse({ action: "COLLECTOR_ACCEPT", requestId: "request-1" }).success, true);
+  assert.equal(simulatorActionSchema.safeParse({ action: "COLLECTOR_DECLINE", requestId: "request-1" }).success, false);
   assert.equal(simulatorActionSchema.safeParse({ action: "RECORD_WEIGHT", requestId: "request-1", actualKg: 12.5 }).success, true);
   assert.equal(simulatorActionSchema.safeParse({ action: "FACILITY_FULL" }).success, false);
 });

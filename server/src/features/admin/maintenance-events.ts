@@ -1,6 +1,5 @@
 import { AccountStatus, CollectionStatus, IncidentPriority, Prisma, ReportType, UserRole } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
-import { dispatchWaitingCollections } from "../collections/collections.routes";
 
 export async function processFacilityMaintenance(now = new Date()): Promise<{ activated: number; released: number; overruns: number }> {
   const windows = await prisma.facilityMaintenanceWindow.findMany({
@@ -82,13 +81,13 @@ export async function processFacilityMaintenance(now = new Date()): Promise<{ ac
       if (affected.length) {
         await transaction.collectionRequest.updateMany({
           where: { maintenanceWindowId: id, status: CollectionStatus.SCHEDULED_MAINTENANCE },
-          data: { status: CollectionStatus.WAITING_FOR_ADMIN, maintenanceWindowId: null },
+          data: { status: CollectionStatus.PENDING, maintenanceWindowId: null },
         });
         await transaction.collectionStatusEvent.createMany({ data: affected.map(({ id: requestId }) => ({
           requestId,
           actorId: window.createdByUserId,
           fromStatus: CollectionStatus.SCHEDULED_MAINTENANCE,
-          toStatus: CollectionStatus.WAITING_FOR_ADMIN,
+          toStatus: CollectionStatus.PENDING,
           note: `Facility maintenance at ${window.facility.name} ended.`,
         })) });
       }
@@ -102,6 +101,5 @@ export async function processFacilityMaintenance(now = new Date()): Promise<{ ac
     if (result.overrun) overruns += 1;
   }
 
-  if (released) await dispatchWaitingCollections();
   return { activated, released, overruns };
 }

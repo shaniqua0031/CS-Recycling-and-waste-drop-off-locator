@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { orderCollectionRequestsByPriority, rankCollectorCandidates, type CollectorCandidateInput } from "./admin.logic";
+import { adminAssignmentCandidates, orderCollectionRequestsByPriority, rankCollectorCandidates, type CollectorCandidateInput } from "./admin.logic";
 
 const now = new Date("2026-10-01T12:00:00.000Z");
 
@@ -87,6 +87,31 @@ test("excludes collectors who are not qualified for the requested material", () 
   );
 
   assert.deepEqual(ranked.map((item) => item.profileId), ["qualified"]);
+});
+
+test("admin assignment includes available collectors regardless of location or material qualification", () => {
+  const candidates = adminAssignmentCandidates([
+    candidate({
+      profileId: "available-no-location",
+      serviceCenterLatitude: null,
+      serviceCenterLongitude: null,
+      qualifiedMaterialIds: ["material-glass"],
+    }),
+  ]);
+
+  assert.deepEqual(candidates.map((item) => item.profileId), ["available-no-location"]);
+});
+
+test("admin assignment excludes inactive, unapproved, and unavailable collectors", () => {
+  const candidates = adminAssignmentCandidates([
+    candidate({ profileId: "inactive", accountStatus: "SUSPENDED" }),
+    candidate({ profileId: "unapproved", approvalStatus: "PENDING" }),
+    candidate({ profileId: "offline", availability: "OFFLINE" }),
+    candidate({ profileId: "busy", availability: "ON_COLLECTION" }),
+    candidate({ profileId: "available" }),
+  ]);
+
+  assert.deepEqual(candidates.map((item) => item.profileId), ["available"]);
 });
 
 test("orders waiting requests by priority before creation time", () => {

@@ -3,7 +3,6 @@
 import dynamic from "next/dynamic";
 import { Fragment, useEffect, useState } from "react";
 import {
-  assignCollector,
   assignAdminIncident,
   cancelAdminCollectionRequest,
   getAdminIncidents,
@@ -24,7 +23,6 @@ import {
   getAdminReports,
   getAdminRequests,
   getAdminUsers,
-  getCollectorCandidates,
   getAdminVerificationQueue,
   getMaterialRates,
   markAdminNotification,
@@ -56,7 +54,6 @@ import {
   type AdminSimulatorEvent,
   type CollectionRecord,
   type CollectionPriority,
-  type CollectorCandidate,
   type MaterialRate,
 } from "../lib/dashboard-api";
 
@@ -166,8 +163,6 @@ export default function AdminDashboard({ email, onLogout, initialSection = "over
   const [isLoading, setIsLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
   const [userSearch, setUserSearch] = useState("");
-  const [candidateRequestId, setCandidateRequestId] = useState("");
-  const [candidates, setCandidates] = useState<CollectorCandidate[]>([]);
   const [rateInputs, setRateInputs] = useState<Record<string, string>>({});
   const [openUserId, setOpenUserId] = useState("");
   const [openRequestId, setOpenRequestId] = useState("");
@@ -261,19 +256,9 @@ export default function AdminDashboard({ email, onLogout, initialSection = "over
     onSubmit(reason || null);
   };
 
-  const openCandidates = async (requestId: string) => {
-    setCandidateRequestId(requestId);
-    setCandidates([]);
-    try {
-      setCandidates(await getCollectorCandidates(requestId));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load eligible collectors.");
-    }
-  };
-
   const runSimulatorAction = (action: AdminSimulatorAction) => {
     const facilityActions: AdminSimulatorAction[] = ["INDIVIDUAL_PICKUP_REQUEST", "BIN_FULL", "ZONE_OVERFLOW", "FACILITY_STORAGE_FULL", "CREATE_COMMUNITY_REPORT", "CREATE_DUPLICATE_REPORT", "FACILITY_FULL", "FACILITY_MAINTENANCE", "FACILITY_RECOVERED", "START_SERVICE_PAUSE", "ENABLE_OVERRUN", "TRIGGER_SENSOR_SPIKE", "RESET_SENSOR"];
-    const requestActions: AdminSimulatorAction[] = ["COMPLETE_COLLECTION", "RECORD_WEIGHT", "COLLECTOR_ACCEPT", "COLLECTOR_DECLINE", "DRIVE_COLLECTOR_TO_SITE"];
+    const requestActions: AdminSimulatorAction[] = ["COMPLETE_COLLECTION", "RECORD_WEIGHT", "DRIVE_COLLECTOR_TO_SITE"];
     if (action === "RESET_SIMULATION" && !window.confirm("Reset simulator-tagged records and restore saved facility/collector states? Ordinary user records will not be deleted.")) return;
     if (facilityActions.includes(action) && !simulatorFacilityId) {
       setError("Select a facility for this simulator action.");
@@ -416,15 +401,10 @@ export default function AdminDashboard({ email, onLogout, initialSection = "over
             {data && section === "requests" && <>
               <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-gray-600">Select a waiting request to view all collector statuses and assignment eligibility.</p><div className="flex flex-wrap gap-2"><input aria-label="Search collection requests" value={requestSearch} onChange={(event) => setRequestSearch(event.target.value)} placeholder="Search recycler, material, location" className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm" /><select aria-label="Filter collection request status" value={requestStatusFilter} onChange={(event) => setRequestStatusFilter(event.target.value)} className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"><option value="ALL">All statuses</option>{["PENDING", "WAITING_FOR_ADMIN", "SCHEDULED_MAINTENANCE", "COLLECTOR_ASSIGNED", "COLLECTOR_ON_THE_WAY", "COLLECTOR_ARRIVED", "COLLECTING", "PAUSED", "VERIFICATION_PENDING", "VERIFIED", "COMPLETED", "CANCELLED", "REJECTED"].map((status) => <option key={status} value={status}>{formatStatus(status)}</option>)}</select></div></div>
               {visibleRequests.length ? <DataTable headings={["Request", "Recycler", "Material", "Estimate", "Priority", "Requested", "Status", "Assignment / actions"]}>{visibleRequests.map((request) => <Fragment key={request.id}>
-                <tr key={request.id} className={`${["WAITING_FOR_ADMIN", "COLLECTOR_ASSIGNED"].includes(request.status) ? "cursor-pointer" : ""} hover:bg-gray-50`} onClick={() => { if (!["WAITING_FOR_ADMIN", "COLLECTOR_ASSIGNED"].includes(request.status)) return; setOpenRequestId(openRequestId === request.id ? "" : request.id); if (candidateRequestId !== request.id) void openCandidates(request.id); }}>
+                <tr key={request.id} className={`${["WAITING_FOR_ADMIN", "COLLECTOR_ASSIGNED"].includes(request.status) ? "cursor-pointer" : ""} hover:bg-gray-50`} onClick={() => { if (!["WAITING_FOR_ADMIN", "COLLECTOR_ASSIGNED"].includes(request.status)) return; setOpenRequestId(openRequestId === request.id ? "" : request.id); }}>
                   <td className="px-4 py-3 font-semibold"><details onClick={(event) => event.stopPropagation()}><summary className="cursor-pointer">{request.id.slice(-8).toUpperCase()}</summary><div className="mt-2 min-w-52 space-y-2 font-normal">{request.statusEvents.map((entry) => <p key={entry.id} className="text-xs text-gray-600">{new Date(entry.createdAt).toLocaleString()} · {formatStatus(entry.toStatus)}{entry.note ? ` · ${entry.note}` : ""}</p>)}{request.assignments.map((assignment) => <p key={assignment.id} className="text-xs text-gray-600">{new Date(assignment.assignedAt ?? request.createdAt).toLocaleString()} · {formatStatus(assignment.status)} · {assignment.collector.user.recyclerProfile?.displayName ?? assignment.collector.user.email}{assignment.reason ? ` · ${assignment.reason}` : ""}</p>)}</div></details></td><td className="px-4 py-3">{request.requester?.recyclerProfile?.displayName ?? request.requester?.email ?? "Recycler"}<p className="text-xs text-gray-500">{request.pickupAddress}</p></td><td className="px-4 py-3">{request.material.name}</td><td className="px-4 py-3">{Number(request.estimatedKg).toLocaleString()} kg</td><td className="px-4 py-3"><select aria-label={`Priority for request ${request.id.slice(-8)}`} disabled={["VERIFIED", "COMPLETED", "CANCELLED", "REJECTED"].includes(request.status)} value={request.priority ?? "MEDIUM"} onClick={(event) => event.stopPropagation()} onChange={(event) => { const priority = event.target.value as CollectionPriority; requestReason(`Reason for changing priority to ${priority}`, (reason) => { if (reason) void mutate(() => updateCollectionPriority(request.id, priority, reason)); }); }} className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs font-semibold disabled:opacity-50"><option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="HIGH">High</option><option value="CRITICAL">Critical</option></select></td><td className="px-4 py-3">{new Date(request.requestedFor).toLocaleString()}</td><td className="px-4 py-3"><RequestStatus status={request.status} /></td><td className="space-y-2 px-4 py-3">{request.destinationFacility?.name ?? "No destination"}<p className="text-xs text-gray-600">{request.assignments.find((assignment) => assignment.status === "ASSIGNED" || assignment.status === "ACCEPTED")?.collector.user.recyclerProfile?.displayName ?? "Unassigned"}</p>{!["VERIFIED", "COMPLETED", "CANCELLED", "REJECTED"].includes(request.status) && <button disabled={isWorking} onClick={(event) => { event.stopPropagation(); requestReason("Reason for cancelling this collection request", (reason) => { if (reason) void mutate(() => cancelAdminCollectionRequest(request.id, reason)); }); }} className="text-xs font-semibold text-rose-700 underline">Cancel request</button>}</td>
                 </tr>
-                {openRequestId === request.id && <tr key={`${request.id}-candidates`}><td colSpan={8} className="bg-gray-50 px-4 py-4">
-                  {request.assignments.some((assignment) => assignment.status === "DECLINED") && <div className="mb-4 rounded-md border border-rose-200 bg-rose-50 p-3"><h3 className="text-sm font-semibold text-rose-900">Previous Collector declines</h3>{request.assignments.filter((assignment) => assignment.status === "DECLINED").map((assignment) => <p key={assignment.id} className="mt-2 text-sm text-rose-900">{assignment.collector.user.recyclerProfile?.displayName ?? assignment.collector.user.email}: {assignment.reason ?? "No reason recorded"}</p>)}</div>}
-                  <h3 className="font-semibold">All collectors</h3>{candidateRequestId !== request.id ? <p className="mt-2 text-sm text-gray-500">Loading collectors…</p> : <div className="grid gap-2 md:grid-cols-2">{data.collectors.map((collector) => {
-                    const eligible = candidates.some((candidate) => candidate.profileId === collector.id);
-                    return <article key={collector.id} className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-white p-3"><div><p className="font-semibold">{collector.displayName}</p><p className="text-xs text-gray-500">{collector.email}</p><p className="text-xs text-gray-600">Availability: {formatStatus(collector.availability)} · Account: {formatStatus(collector.accountStatus)} · Approval: {formatStatus(collector.approvalStatus)}</p>{eligible ? <p className="text-[11px] text-emerald-700">Eligible for this request</p> : <p className="text-[11px] text-gray-500">Does not meet this request’s assignment requirements</p>}</div><button disabled={isWorking || !eligible} onClick={(event) => { event.stopPropagation(); if (!eligible) return; void mutate(() => assignCollector(request.id, collector.id)); }} className="shrink-0 rounded-md bg-emerald-800 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-gray-300">{eligible ? "Assign" : "Not eligible"}</button></article>;
-                    })}</div>}</td></tr>}
+                {openRequestId === request.id && <tr key={`${request.id}-history`}><td colSpan={8} className="bg-gray-50 px-4 py-4"><h3 className="font-semibold">Decision history</h3>{request.assignments.length ? request.assignments.map((assignment) => <p key={assignment.id} className="mt-2 text-sm text-gray-700">{new Date(assignment.acceptedAt ?? assignment.assignedAt ?? request.createdAt).toLocaleString()} · {formatStatus(assignment.status)} · {assignment.collector.user.recyclerProfile?.displayName ?? assignment.collector.user.email}{assignment.reason ? ` · ${assignment.reason}` : ""}</p>) : <p className="mt-2 text-sm text-gray-500">No collector decision recorded.</p>}</td></tr>}
                   </Fragment>)}</DataTable> : <EmptyState>No collection requests match these filters.</EmptyState>}
             </>}
 

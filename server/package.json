@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "dev": "npm run api:dev",
     "start": "node index.js --compiled",
     "api:dev": "tsx watch index.js",
     "api:build": "npm run prisma:generate && npm run api:clean && tsc -p tsconfig.json",

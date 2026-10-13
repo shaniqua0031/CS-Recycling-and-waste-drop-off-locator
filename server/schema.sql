@@ -1,43 +1,97 @@
--- WasteWise PostgreSQL schema. Keep in sync with prisma/schema.prisma.
+-- WasteWise PostgreSQL schema. Safe to re-run in SQL editors.
 
--- CreateEnum
-CREATE TYPE "UserRole" AS ENUM ('RECYCLER', 'COLLECTOR', 'FACILITY', 'ADMIN');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'UserRole') THEN
+    CREATE TYPE "UserRole" AS ENUM ('RECYCLER', 'COLLECTOR', 'FACILITY', 'ADMIN');
+  END IF;
+END $$;
 
--- CreateEnum
-CREATE TYPE "AccountStatus" AS ENUM ('ACTIVE', 'SUSPENDED', 'PENDING_APPROVAL');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'AccountStatus') THEN
+    CREATE TYPE "AccountStatus" AS ENUM ('ACTIVE', 'SUSPENDED', 'PENDING_APPROVAL');
+  END IF;
+END $$;
 
--- CreateEnum
-CREATE TYPE "ApprovalStatus" AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ApprovalStatus') THEN
+    CREATE TYPE "ApprovalStatus" AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
+  END IF;
+END $$;
 
--- CreateEnum
-CREATE TYPE "CollectorAvailability" AS ENUM ('AVAILABLE', 'UNAVAILABLE', 'ON_COLLECTION', 'OFFLINE');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'CollectorAvailability') THEN
+    CREATE TYPE "CollectorAvailability" AS ENUM ('AVAILABLE', 'UNAVAILABLE', 'ON_COLLECTION', 'OFFLINE');
+  END IF;
+END $$;
 
--- CreateEnum
-CREATE TYPE "FacilityMembershipRole" AS ENUM ('OWNER', 'MANAGER', 'STAFF');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'FacilityMembershipRole') THEN
+    CREATE TYPE "FacilityMembershipRole" AS ENUM ('OWNER', 'MANAGER', 'STAFF');
+  END IF;
+END $$;
 
--- CreateEnum
-CREATE TYPE "CollectionStatus" AS ENUM ('PENDING', 'WAITING_FOR_ADMIN', 'COLLECTOR_ASSIGNED', 'COLLECTOR_ON_THE_WAY', 'COLLECTOR_ARRIVED', 'COLLECTED', 'VERIFICATION_PENDING', 'VERIFIED', 'COMPLETED', 'CANCELLED', 'REJECTED');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'CollectionStatus') THEN
+    CREATE TYPE "CollectionStatus" AS ENUM (
+      'PENDING', 'WAITING_FOR_ADMIN', 'COLLECTOR_ASSIGNED', 'COLLECTOR_ON_THE_WAY', 'COLLECTOR_ARRIVED',
+      'COLLECTED', 'VERIFICATION_PENDING', 'VERIFIED', 'COMPLETED', 'CANCELLED', 'REJECTED'
+    );
+  END IF;
+END $$;
 
--- CreateEnum
-CREATE TYPE "AssignmentStatus" AS ENUM ('ASSIGNED', 'ACCEPTED', 'DECLINED', 'REVOKED', 'COMPLETED');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'AssignmentStatus') THEN
+    CREATE TYPE "AssignmentStatus" AS ENUM ('ASSIGNED', 'ACCEPTED', 'DECLINED', 'REVOKED', 'COMPLETED');
+  END IF;
+END $$;
 
--- CreateEnum
-CREATE TYPE "RewardTransactionType" AS ENUM ('EARN', 'REDEEM', 'ADJUSTMENT');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'RewardTransactionType') THEN
+    CREATE TYPE "RewardTransactionType" AS ENUM ('EARN', 'REDEEM', 'ADJUSTMENT');
+  END IF;
+END $$;
 
--- CreateEnum
-CREATE TYPE "RedemptionStatus" AS ENUM ('REQUESTED', 'FULFILLED', 'REJECTED', 'CANCELLED');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'RedemptionStatus') THEN
+    CREATE TYPE "RedemptionStatus" AS ENUM ('REQUESTED', 'FULFILLED', 'REJECTED', 'CANCELLED');
+  END IF;
+END $$;
 
--- CreateEnum
-CREATE TYPE "NotificationType" AS ENUM ('COLLECTION_REQUEST_CREATED', 'COLLECTOR_ASSIGNED', 'COLLECTOR_ON_THE_WAY', 'COLLECTOR_ARRIVED', 'COLLECTION_COMPLETED', 'MATERIAL_VERIFIED', 'POINTS_AWARDED', 'REWARD_REDEEMED', 'COLLECTOR_REGISTRATION', 'FACILITY_REGISTRATION', 'REPORT_SUBMITTED');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'NotificationType') THEN
+    CREATE TYPE "NotificationType" AS ENUM (
+      'COLLECTION_REQUEST_CREATED', 'COLLECTOR_ASSIGNED', 'COLLECTOR_ON_THE_WAY', 'COLLECTOR_ARRIVED',
+      'COLLECTION_COMPLETED', 'MATERIAL_VERIFIED', 'POINTS_AWARDED', 'REWARD_REDEEMED',
+      'COLLECTOR_REGISTRATION', 'FACILITY_REGISTRATION', 'REPORT_SUBMITTED'
+    );
+  END IF;
+END $$;
 
--- CreateEnum
-CREATE TYPE "ReportType" AS ENUM ('INCORRECT_INFORMATION', 'SUGGEST_NEW_FACILITY', 'OTHER');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ReportType') THEN
+    CREATE TYPE "ReportType" AS ENUM ('INCORRECT_INFORMATION', 'SUGGEST_NEW_FACILITY', 'OTHER');
+  END IF;
+END $$;
 
--- CreateEnum
-CREATE TYPE "ReportStatus" AS ENUM ('OPEN', 'UNDER_REVIEW', 'RESOLVED', 'REJECTED');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ReportStatus') THEN
+    CREATE TYPE "ReportStatus" AS ENUM ('OPEN', 'UNDER_REVIEW', 'RESOLVED', 'REJECTED');
+  END IF;
+END $$;
 
--- CreateTable
-CREATE TABLE "User" (
+CREATE TABLE IF NOT EXISTS "User" (
     "id" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "passwordHash" TEXT NOT NULL,
@@ -49,8 +103,7 @@ CREATE TABLE "User" (
     CONSTRAINT "User_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "Session" (
+CREATE TABLE IF NOT EXISTS "Session" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "tokenHash" TEXT NOT NULL,
@@ -61,8 +114,7 @@ CREATE TABLE "Session" (
     CONSTRAINT "Session_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "RecyclerProfile" (
+CREATE TABLE IF NOT EXISTS "RecyclerProfile" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "displayName" TEXT NOT NULL,
@@ -73,8 +125,7 @@ CREATE TABLE "RecyclerProfile" (
     CONSTRAINT "RecyclerProfile_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "CollectorProfile" (
+CREATE TABLE IF NOT EXISTS "CollectorProfile" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "approvalStatus" "ApprovalStatus" NOT NULL DEFAULT 'PENDING',
@@ -95,8 +146,7 @@ CREATE TABLE "CollectorProfile" (
     CONSTRAINT "CollectorProfile_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "Facility" (
+CREATE TABLE IF NOT EXISTS "Facility" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "address" TEXT NOT NULL,
@@ -113,8 +163,7 @@ CREATE TABLE "Facility" (
     CONSTRAINT "Facility_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "FacilityMembership" (
+CREATE TABLE IF NOT EXISTS "FacilityMembership" (
     "id" TEXT NOT NULL,
     "facilityId" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
@@ -124,8 +173,7 @@ CREATE TABLE "FacilityMembership" (
     CONSTRAINT "FacilityMembership_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "FacilityOpeningHour" (
+CREATE TABLE IF NOT EXISTS "FacilityOpeningHour" (
     "id" TEXT NOT NULL,
     "facilityId" TEXT NOT NULL,
     "dayOfWeek" INTEGER NOT NULL,
@@ -136,8 +184,7 @@ CREATE TABLE "FacilityOpeningHour" (
     CONSTRAINT "FacilityOpeningHour_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "Material" (
+CREATE TABLE IF NOT EXISTS "Material" (
     "id" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -148,8 +195,7 @@ CREATE TABLE "Material" (
     CONSTRAINT "Material_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "FacilityMaterial" (
+CREATE TABLE IF NOT EXISTS "FacilityMaterial" (
     "facilityId" TEXT NOT NULL,
     "materialId" TEXT NOT NULL,
     "intakeNotes" TEXT,
@@ -157,8 +203,7 @@ CREATE TABLE "FacilityMaterial" (
     CONSTRAINT "FacilityMaterial_pkey" PRIMARY KEY ("facilityId","materialId")
 );
 
--- CreateTable
-CREATE TABLE "MaterialRewardRate" (
+CREATE TABLE IF NOT EXISTS "MaterialRewardRate" (
     "id" TEXT NOT NULL,
     "materialId" TEXT NOT NULL,
     "pointsPerKg" INTEGER NOT NULL,
@@ -169,8 +214,7 @@ CREATE TABLE "MaterialRewardRate" (
     CONSTRAINT "MaterialRewardRate_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "CollectionRequest" (
+CREATE TABLE IF NOT EXISTS "CollectionRequest" (
     "id" TEXT NOT NULL,
     "requesterId" TEXT NOT NULL,
     "materialId" TEXT NOT NULL,
@@ -189,23 +233,23 @@ CREATE TABLE "CollectionRequest" (
     CONSTRAINT "CollectionRequest_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "CollectionAssignment" (
+CREATE TABLE IF NOT EXISTS "CollectionAssignment" (
     "id" TEXT NOT NULL,
     "requestId" TEXT NOT NULL,
     "collectorProfileId" TEXT NOT NULL,
-    "assignedByUserId" TEXT NOT NULL,
+    "assignedByUserId" TEXT,
     "status" "AssignmentStatus" NOT NULL DEFAULT 'ASSIGNED',
     "assignedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "acceptedAt" TIMESTAMP(3),
+    "declinedAt" TIMESTAMP(3),
     "unassignedAt" TIMESTAMP(3),
     "reason" TEXT,
+    "declineReasonCode" TEXT,
 
     CONSTRAINT "CollectionAssignment_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "CollectionStatusEvent" (
+CREATE TABLE IF NOT EXISTS "CollectionStatusEvent" (
     "id" TEXT NOT NULL,
     "requestId" TEXT NOT NULL,
     "actorId" TEXT,
@@ -217,8 +261,7 @@ CREATE TABLE "CollectionStatusEvent" (
     CONSTRAINT "CollectionStatusEvent_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "CollectionWeight" (
+CREATE TABLE IF NOT EXISTS "CollectionWeight" (
     "id" TEXT NOT NULL,
     "requestId" TEXT NOT NULL,
     "estimatedKg" DECIMAL(8,2) NOT NULL,
@@ -233,8 +276,7 @@ CREATE TABLE "CollectionWeight" (
     CONSTRAINT "CollectionWeight_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "RewardWallet" (
+CREATE TABLE IF NOT EXISTS "RewardWallet" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "pointsBalance" INTEGER NOT NULL DEFAULT 0,
@@ -244,8 +286,7 @@ CREATE TABLE "RewardWallet" (
     CONSTRAINT "RewardWallet_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "RewardTransaction" (
+CREATE TABLE IF NOT EXISTS "RewardTransaction" (
     "id" TEXT NOT NULL,
     "walletId" TEXT NOT NULL,
     "requestId" TEXT,
@@ -260,8 +301,7 @@ CREATE TABLE "RewardTransaction" (
     CONSTRAINT "RewardTransaction_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "RewardRedemption" (
+CREATE TABLE IF NOT EXISTS "RewardRedemption" (
     "id" TEXT NOT NULL,
     "walletId" TEXT NOT NULL,
     "reference" TEXT NOT NULL,
@@ -274,8 +314,7 @@ CREATE TABLE "RewardRedemption" (
     CONSTRAINT "RewardRedemption_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "Notification" (
+CREATE TABLE IF NOT EXISTS "Notification" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "type" "NotificationType" NOT NULL,
@@ -288,8 +327,7 @@ CREATE TABLE "Notification" (
     CONSTRAINT "Notification_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "Report" (
+CREATE TABLE IF NOT EXISTS "Report" (
     "id" TEXT NOT NULL,
     "reporterId" TEXT NOT NULL,
     "facilityId" TEXT,
@@ -306,185 +344,244 @@ CREATE TABLE "Report" (
     CONSTRAINT "Report_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex
-CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
+CREATE UNIQUE INDEX IF NOT EXISTS "User_email_key" ON "User"("email");
+CREATE INDEX IF NOT EXISTS "User_role_status_idx" ON "User"("role", "status");
+CREATE UNIQUE INDEX IF NOT EXISTS "Session_tokenHash_key" ON "Session"("tokenHash");
+CREATE INDEX IF NOT EXISTS "Session_userId_expiresAt_idx" ON "Session"("userId", "expiresAt");
+CREATE UNIQUE INDEX IF NOT EXISTS "RecyclerProfile_userId_key" ON "RecyclerProfile"("userId");
+CREATE UNIQUE INDEX IF NOT EXISTS "CollectorProfile_userId_key" ON "CollectorProfile"("userId");
+CREATE INDEX IF NOT EXISTS "CollectorProfile_approvalStatus_availability_idx" ON "CollectorProfile"("approvalStatus", "availability");
+CREATE INDEX IF NOT EXISTS "Facility_approvalStatus_name_idx" ON "Facility"("approvalStatus", "name");
+CREATE INDEX IF NOT EXISTS "FacilityMembership_userId_idx" ON "FacilityMembership"("userId");
+CREATE UNIQUE INDEX IF NOT EXISTS "FacilityMembership_facilityId_userId_key" ON "FacilityMembership"("facilityId", "userId");
+CREATE UNIQUE INDEX IF NOT EXISTS "FacilityOpeningHour_facilityId_dayOfWeek_key" ON "FacilityOpeningHour"("facilityId", "dayOfWeek");
+CREATE UNIQUE INDEX IF NOT EXISTS "Material_slug_key" ON "Material"("slug");
+CREATE UNIQUE INDEX IF NOT EXISTS "Material_name_key" ON "Material"("name");
+CREATE INDEX IF NOT EXISTS "FacilityMaterial_materialId_idx" ON "FacilityMaterial"("materialId");
+CREATE INDEX IF NOT EXISTS "MaterialRewardRate_materialId_endsAt_idx" ON "MaterialRewardRate"("materialId", "endsAt");
+CREATE UNIQUE INDEX IF NOT EXISTS "MaterialRewardRate_materialId_startsAt_key" ON "MaterialRewardRate"("materialId", "startsAt");
+CREATE INDEX IF NOT EXISTS "CollectionRequest_requesterId_createdAt_idx" ON "CollectionRequest"("requesterId", "createdAt");
+CREATE INDEX IF NOT EXISTS "CollectionRequest_status_requestedFor_idx" ON "CollectionRequest"("status", "requestedFor");
+CREATE INDEX IF NOT EXISTS "CollectionRequest_destinationFacilityId_status_idx" ON "CollectionRequest"("destinationFacilityId", "status");
+CREATE INDEX IF NOT EXISTS "CollectionAssignment_requestId_assignedAt_idx" ON "CollectionAssignment"("requestId", "assignedAt");
+CREATE INDEX IF NOT EXISTS "CollectionAssignment_collectorProfileId_status_idx" ON "CollectionAssignment"("collectorProfileId", "status");
+CREATE INDEX IF NOT EXISTS "CollectionStatusEvent_requestId_createdAt_idx" ON "CollectionStatusEvent"("requestId", "createdAt");
+CREATE UNIQUE INDEX IF NOT EXISTS "CollectionWeight_requestId_key" ON "CollectionWeight"("requestId");
+CREATE INDEX IF NOT EXISTS "CollectionWeight_verifiedFacilityId_verifiedAt_idx" ON "CollectionWeight"("verifiedFacilityId", "verifiedAt");
+CREATE UNIQUE INDEX IF NOT EXISTS "RewardWallet_userId_key" ON "RewardWallet"("userId");
+CREATE UNIQUE INDEX IF NOT EXISTS "RewardTransaction_redemptionId_key" ON "RewardTransaction"("redemptionId");
+CREATE UNIQUE INDEX IF NOT EXISTS "RewardTransaction_idempotencyKey_key" ON "RewardTransaction"("idempotencyKey");
+CREATE INDEX IF NOT EXISTS "RewardTransaction_walletId_createdAt_idx" ON "RewardTransaction"("walletId", "createdAt");
+CREATE UNIQUE INDEX IF NOT EXISTS "RewardRedemption_reference_key" ON "RewardRedemption"("reference");
+CREATE INDEX IF NOT EXISTS "Notification_userId_readAt_createdAt_idx" ON "Notification"("userId", "readAt", "createdAt");
+CREATE INDEX IF NOT EXISTS "Report_status_createdAt_idx" ON "Report"("status", "createdAt");
 
--- CreateIndex
-CREATE INDEX "User_role_status_idx" ON "User"("role", "status");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Session_userId_fkey') THEN
+    ALTER TABLE "Session" ADD CONSTRAINT "Session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "Session_tokenHash_key" ON "Session"("tokenHash");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RecyclerProfile_userId_fkey') THEN
+    ALTER TABLE "RecyclerProfile" ADD CONSTRAINT "RecyclerProfile_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "Session_userId_expiresAt_idx" ON "Session"("userId", "expiresAt");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectorProfile_userId_fkey') THEN
+    ALTER TABLE "CollectorProfile" ADD CONSTRAINT "CollectorProfile_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "RecyclerProfile_userId_key" ON "RecyclerProfile"("userId");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Facility_createdByUserId_fkey') THEN
+    ALTER TABLE "Facility" ADD CONSTRAINT "Facility_createdByUserId_fkey" FOREIGN KEY ("createdByUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "CollectorProfile_userId_key" ON "CollectorProfile"("userId");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FacilityMembership_facilityId_fkey') THEN
+    ALTER TABLE "FacilityMembership" ADD CONSTRAINT "FacilityMembership_facilityId_fkey" FOREIGN KEY ("facilityId") REFERENCES "Facility"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "CollectorProfile_approvalStatus_availability_idx" ON "CollectorProfile"("approvalStatus", "availability");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FacilityMembership_userId_fkey') THEN
+    ALTER TABLE "FacilityMembership" ADD CONSTRAINT "FacilityMembership_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "Facility_approvalStatus_name_idx" ON "Facility"("approvalStatus", "name");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FacilityOpeningHour_facilityId_fkey') THEN
+    ALTER TABLE "FacilityOpeningHour" ADD CONSTRAINT "FacilityOpeningHour_facilityId_fkey" FOREIGN KEY ("facilityId") REFERENCES "Facility"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "FacilityMembership_userId_idx" ON "FacilityMembership"("userId");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FacilityMaterial_facilityId_fkey') THEN
+    ALTER TABLE "FacilityMaterial" ADD CONSTRAINT "FacilityMaterial_facilityId_fkey" FOREIGN KEY ("facilityId") REFERENCES "Facility"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "FacilityMembership_facilityId_userId_key" ON "FacilityMembership"("facilityId", "userId");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FacilityMaterial_materialId_fkey') THEN
+    ALTER TABLE "FacilityMaterial" ADD CONSTRAINT "FacilityMaterial_materialId_fkey" FOREIGN KEY ("materialId") REFERENCES "Material"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "FacilityOpeningHour_facilityId_dayOfWeek_key" ON "FacilityOpeningHour"("facilityId", "dayOfWeek");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'MaterialRewardRate_materialId_fkey') THEN
+    ALTER TABLE "MaterialRewardRate" ADD CONSTRAINT "MaterialRewardRate_materialId_fkey" FOREIGN KEY ("materialId") REFERENCES "Material"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "Material_slug_key" ON "Material"("slug");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectionRequest_requesterId_fkey') THEN
+    ALTER TABLE "CollectionRequest" ADD CONSTRAINT "CollectionRequest_requesterId_fkey" FOREIGN KEY ("requesterId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "Material_name_key" ON "Material"("name");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectionRequest_materialId_fkey') THEN
+    ALTER TABLE "CollectionRequest" ADD CONSTRAINT "CollectionRequest_materialId_fkey" FOREIGN KEY ("materialId") REFERENCES "Material"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "FacilityMaterial_materialId_idx" ON "FacilityMaterial"("materialId");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectionRequest_destinationFacilityId_fkey') THEN
+    ALTER TABLE "CollectionRequest" ADD CONSTRAINT "CollectionRequest_destinationFacilityId_fkey" FOREIGN KEY ("destinationFacilityId") REFERENCES "Facility"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "MaterialRewardRate_materialId_endsAt_idx" ON "MaterialRewardRate"("materialId", "endsAt");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectionAssignment_requestId_fkey') THEN
+    ALTER TABLE "CollectionAssignment" ADD CONSTRAINT "CollectionAssignment_requestId_fkey" FOREIGN KEY ("requestId") REFERENCES "CollectionRequest"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "MaterialRewardRate_materialId_startsAt_key" ON "MaterialRewardRate"("materialId", "startsAt");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectionAssignment_collectorProfileId_fkey') THEN
+    ALTER TABLE "CollectionAssignment" ADD CONSTRAINT "CollectionAssignment_collectorProfileId_fkey" FOREIGN KEY ("collectorProfileId") REFERENCES "CollectorProfile"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "CollectionRequest_requesterId_createdAt_idx" ON "CollectionRequest"("requesterId", "createdAt");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectionAssignment_assignedByUserId_fkey') THEN
+    ALTER TABLE "CollectionAssignment" ADD CONSTRAINT "CollectionAssignment_assignedByUserId_fkey" FOREIGN KEY ("assignedByUserId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "CollectionRequest_status_requestedFor_idx" ON "CollectionRequest"("status", "requestedFor");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectionStatusEvent_requestId_fkey') THEN
+    ALTER TABLE "CollectionStatusEvent" ADD CONSTRAINT "CollectionStatusEvent_requestId_fkey" FOREIGN KEY ("requestId") REFERENCES "CollectionRequest"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "CollectionRequest_destinationFacilityId_status_idx" ON "CollectionRequest"("destinationFacilityId", "status");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectionStatusEvent_actorId_fkey') THEN
+    ALTER TABLE "CollectionStatusEvent" ADD CONSTRAINT "CollectionStatusEvent_actorId_fkey" FOREIGN KEY ("actorId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "CollectionAssignment_requestId_assignedAt_idx" ON "CollectionAssignment"("requestId", "assignedAt");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectionWeight_requestId_fkey') THEN
+    ALTER TABLE "CollectionWeight" ADD CONSTRAINT "CollectionWeight_requestId_fkey" FOREIGN KEY ("requestId") REFERENCES "CollectionRequest"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "CollectionAssignment_collectorProfileId_status_idx" ON "CollectionAssignment"("collectorProfileId", "status");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectionWeight_recordedByUserId_fkey') THEN
+    ALTER TABLE "CollectionWeight" ADD CONSTRAINT "CollectionWeight_recordedByUserId_fkey" FOREIGN KEY ("recordedByUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "CollectionStatusEvent_requestId_createdAt_idx" ON "CollectionStatusEvent"("requestId", "createdAt");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectionWeight_verifiedByUserId_fkey') THEN
+    ALTER TABLE "CollectionWeight" ADD CONSTRAINT "CollectionWeight_verifiedByUserId_fkey" FOREIGN KEY ("verifiedByUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "CollectionWeight_requestId_key" ON "CollectionWeight"("requestId");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CollectionWeight_verifiedFacilityId_fkey') THEN
+    ALTER TABLE "CollectionWeight" ADD CONSTRAINT "CollectionWeight_verifiedFacilityId_fkey" FOREIGN KEY ("verifiedFacilityId") REFERENCES "Facility"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "CollectionWeight_verifiedFacilityId_verifiedAt_idx" ON "CollectionWeight"("verifiedFacilityId", "verifiedAt");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RewardWallet_userId_fkey') THEN
+    ALTER TABLE "RewardWallet" ADD CONSTRAINT "RewardWallet_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "RewardWallet_userId_key" ON "RewardWallet"("userId");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RewardTransaction_walletId_fkey') THEN
+    ALTER TABLE "RewardTransaction" ADD CONSTRAINT "RewardTransaction_walletId_fkey" FOREIGN KEY ("walletId") REFERENCES "RewardWallet"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "RewardTransaction_redemptionId_key" ON "RewardTransaction"("redemptionId");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RewardTransaction_requestId_fkey') THEN
+    ALTER TABLE "RewardTransaction" ADD CONSTRAINT "RewardTransaction_requestId_fkey" FOREIGN KEY ("requestId") REFERENCES "CollectionRequest"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "RewardTransaction_idempotencyKey_key" ON "RewardTransaction"("idempotencyKey");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RewardTransaction_redemptionId_fkey') THEN
+    ALTER TABLE "RewardTransaction" ADD CONSTRAINT "RewardTransaction_redemptionId_fkey" FOREIGN KEY ("redemptionId") REFERENCES "RewardRedemption"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "RewardTransaction_walletId_createdAt_idx" ON "RewardTransaction"("walletId", "createdAt");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RewardRedemption_walletId_fkey') THEN
+    ALTER TABLE "RewardRedemption" ADD CONSTRAINT "RewardRedemption_walletId_fkey" FOREIGN KEY ("walletId") REFERENCES "RewardWallet"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE UNIQUE INDEX "RewardRedemption_reference_key" ON "RewardRedemption"("reference");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Notification_userId_fkey') THEN
+    ALTER TABLE "Notification" ADD CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "Notification_userId_readAt_createdAt_idx" ON "Notification"("userId", "readAt", "createdAt");
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Report_reporterId_fkey') THEN
+    ALTER TABLE "Report" ADD CONSTRAINT "Report_reporterId_fkey" FOREIGN KEY ("reporterId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
--- CreateIndex
-CREATE INDEX "Report_status_createdAt_idx" ON "Report"("status", "createdAt");
-
--- AddForeignKey
-ALTER TABLE "Session" ADD CONSTRAINT "Session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "RecyclerProfile" ADD CONSTRAINT "RecyclerProfile_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectorProfile" ADD CONSTRAINT "CollectorProfile_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Facility" ADD CONSTRAINT "Facility_createdByUserId_fkey" FOREIGN KEY ("createdByUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "FacilityMembership" ADD CONSTRAINT "FacilityMembership_facilityId_fkey" FOREIGN KEY ("facilityId") REFERENCES "Facility"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "FacilityMembership" ADD CONSTRAINT "FacilityMembership_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "FacilityOpeningHour" ADD CONSTRAINT "FacilityOpeningHour_facilityId_fkey" FOREIGN KEY ("facilityId") REFERENCES "Facility"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "FacilityMaterial" ADD CONSTRAINT "FacilityMaterial_facilityId_fkey" FOREIGN KEY ("facilityId") REFERENCES "Facility"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "FacilityMaterial" ADD CONSTRAINT "FacilityMaterial_materialId_fkey" FOREIGN KEY ("materialId") REFERENCES "Material"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "MaterialRewardRate" ADD CONSTRAINT "MaterialRewardRate_materialId_fkey" FOREIGN KEY ("materialId") REFERENCES "Material"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectionRequest" ADD CONSTRAINT "CollectionRequest_requesterId_fkey" FOREIGN KEY ("requesterId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectionRequest" ADD CONSTRAINT "CollectionRequest_materialId_fkey" FOREIGN KEY ("materialId") REFERENCES "Material"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectionRequest" ADD CONSTRAINT "CollectionRequest_destinationFacilityId_fkey" FOREIGN KEY ("destinationFacilityId") REFERENCES "Facility"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectionAssignment" ADD CONSTRAINT "CollectionAssignment_requestId_fkey" FOREIGN KEY ("requestId") REFERENCES "CollectionRequest"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectionAssignment" ADD CONSTRAINT "CollectionAssignment_collectorProfileId_fkey" FOREIGN KEY ("collectorProfileId") REFERENCES "CollectorProfile"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectionAssignment" ADD CONSTRAINT "CollectionAssignment_assignedByUserId_fkey" FOREIGN KEY ("assignedByUserId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectionStatusEvent" ADD CONSTRAINT "CollectionStatusEvent_requestId_fkey" FOREIGN KEY ("requestId") REFERENCES "CollectionRequest"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectionStatusEvent" ADD CONSTRAINT "CollectionStatusEvent_actorId_fkey" FOREIGN KEY ("actorId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectionWeight" ADD CONSTRAINT "CollectionWeight_requestId_fkey" FOREIGN KEY ("requestId") REFERENCES "CollectionRequest"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectionWeight" ADD CONSTRAINT "CollectionWeight_recordedByUserId_fkey" FOREIGN KEY ("recordedByUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectionWeight" ADD CONSTRAINT "CollectionWeight_verifiedByUserId_fkey" FOREIGN KEY ("verifiedByUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "CollectionWeight" ADD CONSTRAINT "CollectionWeight_verifiedFacilityId_fkey" FOREIGN KEY ("verifiedFacilityId") REFERENCES "Facility"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "RewardWallet" ADD CONSTRAINT "RewardWallet_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "RewardTransaction" ADD CONSTRAINT "RewardTransaction_walletId_fkey" FOREIGN KEY ("walletId") REFERENCES "RewardWallet"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "RewardTransaction" ADD CONSTRAINT "RewardTransaction_requestId_fkey" FOREIGN KEY ("requestId") REFERENCES "CollectionRequest"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "RewardTransaction" ADD CONSTRAINT "RewardTransaction_redemptionId_fkey" FOREIGN KEY ("redemptionId") REFERENCES "RewardRedemption"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "RewardRedemption" ADD CONSTRAINT "RewardRedemption_walletId_fkey" FOREIGN KEY ("walletId") REFERENCES "RewardWallet"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Notification" ADD CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Report" ADD CONSTRAINT "Report_reporterId_fkey" FOREIGN KEY ("reporterId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Report" ADD CONSTRAINT "Report_facilityId_fkey" FOREIGN KEY ("facilityId") REFERENCES "Facility"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Report_facilityId_fkey') THEN
+    ALTER TABLE "Report" ADD CONSTRAINT "Report_facilityId_fkey" FOREIGN KEY ("facilityId") REFERENCES "Facility"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;

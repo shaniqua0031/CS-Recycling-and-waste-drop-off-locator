@@ -70,18 +70,40 @@ export function isDbError(error: unknown): boolean {
 }
 
 export function syncDemoState(): void {
-  if (demoUsers.size > 0) return;
+  const demoUsersToSeed: DemoUser[] = [
+    {
+      id: "demo-user",
+      email: "demo@wastewise.local",
+      passwordHash: "$2a$12$Hf2cnDNx4A7s2lQ9N3QOgu8mQ8w2JpTgqj17v1jO5v2M2LQK3q4u.",
+      role: UserRole.RECYCLER,
+      status: AccountStatus.ACTIVE,
+      displayName: "Demo User",
+      phone: null,
+    },
+    {
+      id: "demo-collector",
+      email: "collectors@gmail.com",
+      passwordHash: "$2b$12$QOETg9dylze0WTtyn.nyDOrO5cRAgj3/QDxorv3CPJ2JYxrqun0aW",
+      role: UserRole.COLLECTOR,
+      status: AccountStatus.ACTIVE,
+      displayName: "Demo Collector",
+      phone: null,
+    },
+    {
+      id: "demo-collector-alt",
+      email: "collector@gmail.com",
+      passwordHash: "$2b$12$QOETg9dylze0WTtyn.nyDOrO5cRAgj3/QDxorv3CPJ2JYxrqun0aW",
+      role: UserRole.COLLECTOR,
+      status: AccountStatus.ACTIVE,
+      displayName: "Collector Demo",
+      phone: null,
+    },
+  ];
 
-  const demoUser: DemoUser = {
-    id: "demo-user",
-    email: "demo@wastewise.local",
-    passwordHash: "$2a$12$Hf2cnDNx4A7s2lQ9N3QOgu8mQ8w2JpTgqj17v1jO5v2M2LQK3q4u.",
-    role: UserRole.RECYCLER,
-    status: AccountStatus.ACTIVE,
-    displayName: "Demo User",
-    phone: null,
-  };
-
-  saveDemoUser(demoUser);
+  for (const demoUser of demoUsersToSeed) {
+    if (!findDemoUserByEmail(demoUser.email)) {
+      saveDemoUser(demoUser);
+    }
+  }
 }
 

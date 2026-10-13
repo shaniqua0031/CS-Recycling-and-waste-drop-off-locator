@@ -6,7 +6,7 @@ import { getAvailableFacilities, type AvailableFacility, type BufferedCollection
 import { buildDirectionsUrl } from "../lib/collection-workflow";
 import type { Location } from "./locations";
 
-export type CollectionStatus = "Pending" | "Assigned" | "On the way" | "Arrived" | "Collecting" | "Paused" | "Collected" | "Verified" | "Cancelled" | "Rejected";
+export type CollectionStatus = "Pending" | "Accepted" | "Declined" | "Assigned" | "On the way" | "Arrived" | "Collecting" | "Paused" | "Collected" | "Verified" | "Cancelled" | "Rejected";
 
 export type CollectionRequest = {
   id: string;
@@ -19,6 +19,7 @@ export type CollectionRequest = {
   estimatedWeightKg: number;
   preferredDate: string;
   status: CollectionStatus;
+  notes?: string | null;
   collectorId?: string;
   collectorName?: string;
   collectorAccepted?: boolean;
@@ -31,6 +32,9 @@ export type CollectionRequest = {
   distanceKm?: number | null;
   assignmentStatus?: string;
   assignedAt?: string;
+  acceptedAt?: string | null;
+  declineReason?: string | null;
+  declinedAt?: string | null;
   declineReasonCode?: string | null;
   materialId: string;
   collectedWeightKg?: number;
@@ -68,6 +72,8 @@ function WorkflowFrame({ title, description, onBack, children }: {
 function StatusBadge({ status }: { status: CollectionStatus }) {
   const colors: Record<CollectionStatus, string> = {
     Pending: "bg-amber-100 text-amber-800",
+    Accepted: "bg-green-100 text-green-800",
+    Declined: "bg-rose-100 text-rose-800",
     Assigned: "bg-blue-100 text-blue-800",
     "On the way": "bg-sky-100 text-sky-800",
     Arrived: "bg-indigo-100 text-indigo-800",
@@ -324,7 +330,8 @@ export function TrackingScreen({ requests, points, rates, notifications, onBack,
         <article key={request.id} className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between gap-3"><h2 className="font-display font-bold text-gray-900">{request.material} collection</h2><StatusBadge status={request.status} /></div>
           <RequestSummary request={request} />
-          {request.collectorName && <p className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-900">Collector assigned: <strong>{request.collectorName}</strong> · {request.collectorAccepted ? "Accepted and on the way" : "Waiting for the Collector to respond"}</p>}
+          {request.collectorName && <p className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-900">Collector: <strong>{request.collectorName}</strong> · {request.collectorAccepted ? request.status === "Accepted" ? "Accepted, preparing pickup" : "Accepted and on the way" : "Waiting for the Collector to respond"}</p>}
+          {request.status === "Declined" && <div role="status" className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-900"><p className="font-semibold">This collection request was declined.</p><p className="mt-1">Reason: {request.declineReason ?? "No reason was recorded."}</p>{request.declinedAt && <p className="mt-1 text-xs">Decision made {new Date(request.declinedAt).toLocaleString()}</p>}</div>}
           {request.collectorAccepted && ["On the way", "Arrived", "Collecting", "Paused"].includes(request.status) && <p className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-900">Collector is on the way. Estimated arrival: {request.estimatedEtaMinutes == null ? "unavailable" : `${request.estimatedEtaMinutes} minutes`}. Exact collector location is private.</p>}
           {["Pending", "Assigned", "On the way", "Arrived"].includes(request.status) && <button type="button" disabled={cancellingId === request.id} onClick={() => {
             if (!window.confirm("Cancel this collection request?")) return;
@@ -335,7 +342,7 @@ export function TrackingScreen({ requests, points, rates, notifications, onBack,
           <ol aria-label={`Status for ${request.material} collection`} className="mt-4 grid grid-cols-3 gap-1 text-center text-[10px] sm:grid-cols-6 sm:text-xs">
             {(["Request submitted", "Collector assigned", "Collector accepted", "On the way", "Collection", "Verified"] as const).map((step, index) => {
               const reached = index === 0
-                || (index === 1 && request.status !== "Pending")
+                || (index === 1 && request.status !== "Pending" && request.status !== "Declined")
                 || (index === 2 && request.collectorAccepted === true)
                 || (index === 3 && ["On the way", "Arrived", "Collecting", "Paused", "Collected", "Verified"].includes(request.status))
                 || (index === 4 && ["Collecting", "Paused", "Collected", "Verified"].includes(request.status))
@@ -536,21 +543,23 @@ export function CollectorBoardScreen({ requests, onBack, onAccept, onDecline }: 
   requests: CollectionRequest[];
   onBack: () => void;
   onAccept: (requestId: string) => Promise<void>;
-  onDecline: (requestId: string, reasonCode: string, explanation?: string) => Promise<void>;
+  onDecline: (requestId: string, reason: string) => Promise<void>;
 }) {
   const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [decliningRequestId, setDecliningRequestId] = useState("");
-  const [declineReasonCode, setDeclineReasonCode] = useState("OTHER");
-  const [declineExplanation, setDeclineExplanation] = useState("");
+  const [declineReason, setDeclineReason] = useState("");
 
   const accept = async (requestId: string) => {
     setBusyId(requestId);
     setError("");
+    setSuccess("");
     try {
       await onAccept(requestId);
+      setSuccess("Request accepted. It is now in My Pickups.");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not accept this assignment.");
+      setError(caught instanceof Error ? caught.message : "Could not accept this request.");
     } finally {
       setBusyId("");
     }
@@ -558,42 +567,45 @@ export function CollectorBoardScreen({ requests, onBack, onAccept, onDecline }: 
 
   const decline = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const reason = declineReason.trim();
+    if (!reason) {
+      setError("Enter a reason before declining this request.");
+      return;
+    }
     setBusyId(decliningRequestId);
     setError("");
+    setSuccess("");
     try {
-      await onDecline(decliningRequestId, declineReasonCode, declineExplanation.trim() || undefined);
+      await onDecline(decliningRequestId, reason);
       setDecliningRequestId("");
-      setDeclineExplanation("");
+      setDeclineReason("");
+      setSuccess("Request declined. The requester has been notified.");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not decline this assignment.");
+      setError(caught instanceof Error ? caught.message : "Could not decline this request.");
     } finally {
       setBusyId("");
     }
   };
 
   return (
-    <WorkflowFrame title="Collection queue" description="Priority-ranked jobs matched to your availability and material qualifications." onBack={onBack}>
+    <WorkflowFrame title="Available Collection Requests" description="Review open requests and decide whether to accept or decline." onBack={onBack}>
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-      {requests.length === 0 ? <p className="border-y border-gray-200 bg-white p-5 text-sm text-gray-600">No assigned jobs. New matching work will appear here.</p> : requests.map((request) => (
+      {success && <p role="status" className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900">{success}</p>}
+      {requests.length === 0 ? <p className="border-y border-gray-200 bg-white p-5 text-sm text-gray-600">No available collection requests right now.</p> : requests.map((request) => (
         <article key={request.id} className={`border-y bg-white p-4 ${request.priority === "CRITICAL" ? "border-rose-400 border-y-2" : request.priority === "HIGH" ? "border-orange-300 border-y-2" : "border-gray-200"}`}>
           <div className="flex items-start justify-between gap-3"><div><h2 className="font-display font-bold text-gray-900">{request.material} pickup</h2><p className="mt-1 text-xs text-gray-500">COL-{request.id.slice(-4).toUpperCase()}</p></div><div className="flex flex-col items-end gap-2"><PriorityBadge priority={request.priority} /><StatusBadge status={request.status} /></div></div>
           <p className="mt-2 text-sm text-gray-600">Requested by {request.recyclerName}</p>
           <RequestSummary request={request} />
-          <p className="mt-2 text-xs text-gray-500">{request.distanceKm == null ? "Distance unavailable" : `${request.distanceKm.toFixed(1)} km away`} · Added {new Date(request.createdAt).toLocaleString()}</p>
-          <div className="mt-4 grid grid-cols-2 gap-2"><button type="button" disabled={busyId === request.id} onClick={() => void accept(request.id)} className="min-h-11 rounded-md bg-green-800 px-3 py-2.5 text-sm font-semibold text-white hover:bg-green-900 disabled:opacity-50">{busyId === request.id ? "Accepting…" : "Accept"}</button><button type="button" disabled={busyId === request.id} onClick={() => { setDecliningRequestId(request.id); setDeclineReasonCode("OTHER"); setDeclineExplanation(""); setError(""); }} className="min-h-11 rounded-md border border-rose-300 px-3 py-2.5 text-sm font-semibold text-rose-800 hover:bg-rose-50 disabled:opacity-50">Decline</button></div>
+          {request.notes && <p className="mt-2 rounded-md bg-gray-50 px-3 py-2 text-sm text-gray-700">Instructions: {request.notes}</p>}
+          <p className="mt-2 text-xs text-gray-500">Submitted {new Date(request.createdAt).toLocaleString()}</p>
+          <div className="mt-4 grid grid-cols-2 gap-2"><button type="button" disabled={busyId === request.id} onClick={() => void accept(request.id)} className="min-h-11 rounded-md bg-green-800 px-3 py-2.5 text-sm font-semibold text-white hover:bg-green-900 disabled:opacity-50">{busyId === request.id ? "Accepting…" : "Accept Request"}</button><button type="button" disabled={busyId === request.id} onClick={() => { setDecliningRequestId(request.id); setDeclineReason(""); setError(""); setSuccess(""); }} className="min-h-11 rounded-md border border-rose-300 px-3 py-2.5 text-sm font-semibold text-rose-800 hover:bg-rose-50 disabled:opacity-50">Decline Request</button></div>
         </article>
       ))}
       {decliningRequestId && <div className="fixed inset-0 z-[1000] grid place-items-center bg-black/50 p-4" onClick={() => { if (!busyId) setDecliningRequestId(""); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="decline-assignment-title" className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
-          <h2 id="decline-assignment-title" className="font-display text-lg font-bold text-gray-900">Decline assignment</h2>
-          <p className="mt-1 text-sm text-gray-600">Choose a reason. An explanation is optional.</p>
+          <h2 id="decline-assignment-title" className="font-display text-lg font-bold text-gray-900">Decline request</h2>
           <form onSubmit={(event) => void decline(event)} className="mt-4 space-y-3">
-            <label className="block text-sm font-medium text-gray-800">Reason code
-              <select required value={declineReasonCode} onChange={(event) => setDeclineReasonCode(event.target.value)} className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2.5">
-                <option value="VEHICLE_FULL">Vehicle full</option><option value="TOO_FAR">Too far</option><option value="UNAVAILABLE">Unavailable</option><option value="MATERIAL_UNSUPPORTED">Material unsupported</option><option value="SAFETY_ISSUE">Safety issue</option><option value="OTHER">Other</option>
-              </select>
-            </label>
-            <label className="block text-sm font-medium text-gray-800">Explanation (optional)<textarea maxLength={500} rows={3} value={declineExplanation} onChange={(event) => setDeclineExplanation(event.target.value)} className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2.5" /></label>
+            <label htmlFor="decline-request-reason" className="block text-sm font-medium text-gray-800">Reason for Declining<textarea id="decline-request-reason" required minLength={1} maxLength={500} rows={4} value={declineReason} onChange={(event) => setDeclineReason(event.target.value)} className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2.5" /></label>
             {error && <p role="alert" className="text-sm text-rose-700">{error}</p>}
             <div className="flex justify-end gap-2"><button type="button" disabled={Boolean(busyId)} onClick={() => setDecliningRequestId("")} className="rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold">Cancel</button><button type="submit" disabled={Boolean(busyId)} className="rounded-md bg-rose-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">{busyId === decliningRequestId ? "Declining…" : "Confirm decline"}</button></div>
           </form>
@@ -609,7 +621,7 @@ export function CollectorPickupsScreen({ requests, materials: availableMaterials
   onBack: () => void;
   onRecordCollection: (requestId: string, input: { materials: Array<{ materialId: string; actualKg: number }>; notes?: string }) => Promise<void>;
   onUpdateLocation: (latitude: number, longitude: number) => Promise<void>;
-  onUpdateProgress: (requestId: string, action: "ARRIVED" | "START" | "PAUSE" | "RESUME", details?: { delayCode?: string; explanation?: string }) => Promise<void>;
+  onUpdateProgress: (requestId: string, action: "START_TRAVEL" | "ARRIVED" | "START" | "PAUSE" | "RESUME", details?: { delayCode?: string; explanation?: string }) => Promise<void>;
 }) {
   const [weights, setWeights] = useState<Record<string, Array<{ materialId: string; value: string }>>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -620,7 +632,7 @@ export function CollectorPickupsScreen({ requests, materials: availableMaterials
   const [pausingRequestId, setPausingRequestId] = useState("");
   const [delayCode, setDelayCode] = useState("OTHER");
   const [delayExplanation, setDelayExplanation] = useState("");
-  const assignedRequests = requests.filter((request) => ["On the way", "Arrived", "Collecting", "Paused"].includes(request.status));
+  const assignedRequests = requests.filter((request) => ["Accepted", "On the way", "Arrived", "Collecting", "Paused"].includes(request.status));
   const completedRequests = requests.filter((request) => request.status === "Collected" || request.status === "Verified");
 
   const linesFor = (request: CollectionRequest) => weights[request.id] ?? [{ materialId: request.materialId, value: String(request.estimatedWeightKg) }];
@@ -670,7 +682,7 @@ export function CollectorPickupsScreen({ requests, materials: availableMaterials
     }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
   };
 
-  const updateProgress = async (requestId: string, action: "ARRIVED" | "START" | "PAUSE" | "RESUME", details?: { delayCode?: string; explanation?: string }) => {
+  const updateProgress = async (requestId: string, action: "START_TRAVEL" | "ARRIVED" | "START" | "PAUSE" | "RESUME", details?: { delayCode?: string; explanation?: string }) => {
     setBusyId(requestId);
     setError("");
     try {
@@ -692,7 +704,8 @@ export function CollectorPickupsScreen({ requests, materials: availableMaterials
         <article key={request.id} className={`rounded-md border bg-white p-4 ${request.priority === "CRITICAL" ? "border-rose-400 border-l-4" : request.priority === "HIGH" ? "border-orange-300 border-l-4" : "border-gray-200"}`}>
           <div className="flex items-start justify-between gap-3"><div><h2 className="font-display font-bold text-gray-900">{request.material} pickup</h2><p className="mt-1 text-xs text-gray-500">COL-{request.id.slice(-4).toUpperCase()}</p></div><div className="flex flex-col items-end gap-2"><PriorityBadge priority={request.priority} /><StatusBadge status={request.status} /></div></div>
           <RequestSummary request={request} />
-          {request.status === "On the way" && <><button type="button" onClick={() => openDirections(request)} className="mt-3 block min-h-11 w-full rounded-md border border-gray-300 px-4 py-3 text-sm font-semibold text-gray-900">Navigate</button><button type="button" disabled={busyId === request.id} onClick={() => void updateProgress(request.id, "ARRIVED")} className="mt-2 block min-h-11 w-full rounded-md bg-green-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{busyId === request.id ? "Updating…" : "Mark arrived"}</button></>}
+              {request.status === "Accepted" && <button type="button" disabled={busyId === request.id} onClick={() => void updateProgress(request.id, "START_TRAVEL")} className="mt-3 block min-h-11 w-full rounded-md bg-green-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{busyId === request.id ? "Updating…" : "Start route"}</button>}
+              {request.status === "On the way" && <><button type="button" onClick={() => openDirections(request)} className="mt-3 block min-h-11 w-full rounded-md border border-gray-300 px-4 py-3 text-sm font-semibold text-gray-900">Navigate</button><button type="button" disabled={busyId === request.id} onClick={() => void updateProgress(request.id, "ARRIVED")} className="mt-2 block min-h-11 w-full rounded-md bg-green-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{busyId === request.id ? "Updating…" : "Mark arrived"}</button></>}
           {request.status === "Arrived" && <button type="button" disabled={busyId === request.id} onClick={() => void updateProgress(request.id, "START")} className="mt-3 block min-h-11 w-full rounded-md bg-green-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{busyId === request.id ? "Updating…" : "Start job"}</button>}
           {request.status === "Collecting" && <button type="button" disabled={busyId === request.id} onClick={() => { setPausingRequestId(request.id); setDelayCode("OTHER"); setDelayExplanation(""); setError(""); }} className="mt-3 block min-h-11 w-full rounded-md border border-amber-400 px-4 py-3 text-sm font-semibold text-amber-900 disabled:opacity-50">Pause job</button>}
           {request.status === "Paused" && <button type="button" disabled={busyId === request.id} onClick={() => void updateProgress(request.id, "RESUME")} className="mt-3 block w-full rounded-md bg-green-700 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">Resume collection</button>}

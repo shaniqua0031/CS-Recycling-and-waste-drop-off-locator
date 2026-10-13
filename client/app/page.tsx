@@ -73,7 +73,8 @@ type AuthSubmission = Omit<RegistrationInput, "displayName"> & { displayName?: s
 
 function toWorkflowCollection(record: CollectionRecord): CollectionRequest {
   const status = toWorkflowStatus(record.status);
-  const assignment = record.assignments[0];
+  const assignment = record.assignments.find((item) => item.status === "ACCEPTED" || item.status === "ASSIGNED") ?? record.assignments[0];
+  const declinedAssignment = record.assignments.find((item) => item.status === "DECLINED");
   return {
     id: record.id,
     materialId: record.material.id,
@@ -89,12 +90,16 @@ function toWorkflowCollection(record: CollectionRecord): CollectionRequest {
     distanceKm: record.distanceKm ?? null,
     preferredDate: record.requestedFor,
     status,
+    notes: record.notes,
     collectorId: assignment?.collector.user.id,
     collectorName: assignment?.collector.user.recyclerProfile?.displayName ?? assignment?.collector.user.email,
     collectorAccepted: assignment?.status === "ACCEPTED",
     assignmentStatus: assignment?.status,
     assignedAt: assignment?.assignedAt,
+    acceptedAt: assignment?.acceptedAt,
     declineReasonCode: assignment?.declineReasonCode ?? null,
+    declineReason: declinedAssignment?.reason ?? null,
+    declinedAt: declinedAssignment?.declinedAt ?? null,
     collectorLatitude: assignment?.collector.currentLatitude,
     collectorLongitude: assignment?.collector.currentLongitude,
     collectorLocationUpdatedAt: assignment?.collector.lastLocationUpdatedAt,
@@ -1446,7 +1451,10 @@ export default function Home() {
       role === "RECYCLER" ? getUserNotifications() : Promise.resolve([] as UserNotification[]),
       role === "COLLECTOR" ? getCollectorDashboard() : Promise.resolve(null),
     ]);
-    setCollectionRequests((collectorData?.requests ?? records).map(toWorkflowCollection));
+    const workflowRecords = collectorData
+      ? [...collectorData.availableRequests, ...collectorData.requests]
+      : records;
+    setCollectionRequests(workflowRecords.map(toWorkflowCollection));
     setCollectorDashboard(collectorData);
     setUserNotifications(collectorData?.notifications ?? notifications);
     setFacilityDashboard(null);
@@ -1665,12 +1673,11 @@ export default function Home() {
     if (!currentUser || currentUser.role !== "COLLECTOR") throw new Error("Sign in with an approved Collector account to accept assignments.");
     await acceptCollectionApi(requestId);
     await refreshRoleWorkflow(currentUser.id, currentUser.role);
-    setScreen("collector-pickups");
   };
 
-  const declineCollectionRequest = async (requestId: string, reasonCode: string, explanation?: string) => {
-    if (!currentUser || currentUser.role !== "COLLECTOR") throw new Error("Sign in with an approved Collector account to decline assignments.");
-    await declineCollectionApi(requestId, reasonCode, explanation);
+  const declineCollectionRequest = async (requestId: string, reason: string) => {
+    if (!currentUser || currentUser.role !== "COLLECTOR") throw new Error("Sign in with an approved Collector account to decline requests.");
+    await declineCollectionApi(requestId, reason);
     await refreshRoleWorkflow(currentUser.id, currentUser.role);
   };
 
@@ -1680,7 +1687,7 @@ export default function Home() {
     await refreshRoleWorkflow(currentUser.id, currentUser.role);
   };
 
-  const updateCollectionProgressForCollector = async (requestId: string, action: "ARRIVED" | "START" | "PAUSE" | "RESUME", details?: { delayCode?: string; explanation?: string }) => {
+  const updateCollectionProgressForCollector = async (requestId: string, action: "START_TRAVEL" | "ARRIVED" | "START" | "PAUSE" | "RESUME", details?: { delayCode?: string; explanation?: string }) => {
     if (!currentUser || currentUser.role !== "COLLECTOR") throw new Error("Only the assigned Collector can update pickup progress.");
     await updateCollectionProgress(requestId, action, details);
     await refreshRoleWorkflow(currentUser.id, currentUser.role);
@@ -1918,7 +1925,7 @@ export default function Home() {
       {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "tracking" && <TrackingScreen requests={collectionRequests.filter((request) => request.recyclerId === currentUser.id)} points={pointsBalance} rates={rewardRates} notifications={userNotifications} onBack={goToDashboard} onRewards={() => setScreen("rewards")} onRefresh={() => refreshRoleWorkflow(currentUser.id, currentUser.role)} onCancel={cancelCollectionRequest} onMarkNotificationRead={markNotificationRead} />}
       {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "rewards" && <RewardsScreen points={pointsBalance} rates={rewardRates} rewards={rewardCatalog} transactions={rewardTransactions} redemptions={rewardRedemptions} onBack={goToDashboard} onRedeem={redeemReward} onElectricityRedeem={redeemElectricity} />}
       {isAuthenticated && currentUser?.role === "RECYCLER" && screen === "profile" && <RecyclerProfileScreen key={recyclerProfile?.email ?? "loading"} profile={recyclerProfile} onBack={goToDashboard} onSave={saveRecyclerProfile} onChangePassword={updateRecyclerPassword} />}
-      {isAuthenticated && currentUser?.role === "COLLECTOR" && screen === "collector-board" && <CollectorBoardScreen requests={collectionRequests.filter((request) => request.collectorId === currentUser.id && request.assignmentStatus === "ASSIGNED")} onBack={goToDashboard} onAccept={acceptCollectionRequest} onDecline={declineCollectionRequest} />}
+      {isAuthenticated && currentUser?.role === "COLLECTOR" && screen === "collector-board" && <CollectorBoardScreen requests={collectionRequests.filter((request) => request.status === "Pending" || request.assignmentStatus === "ASSIGNED")} onBack={goToDashboard} onAccept={acceptCollectionRequest} onDecline={declineCollectionRequest} />}
       {isAuthenticated && currentUser?.role === "COLLECTOR" && screen === "collector-pickups" && <CollectorPickupsScreen requests={collectionRequests.filter((request) => request.collectorId === currentUser.id)} materials={collectorDashboard?.materials ?? []} onBack={goToDashboard} onRecordCollection={recordCollectedMaterial} onUpdateLocation={updateCollectorCurrentLocation} onUpdateProgress={updateCollectionProgressForCollector} />}
       {isAuthenticated && currentUser?.role === "COLLECTOR" && screen === "collector-history" && <CollectorHistoryScreen requests={collectionRequests.filter((request) => request.collectorId === currentUser.id)} performance={collectorDashboard?.performance ?? null} onBack={goToDashboard} />}
       {isAuthenticated && currentUser?.role === "FACILITY" && screen === "facility-profile" && <FacilityProfileScreen profile={facilityProfile} onBack={goToDashboard} onSave={saveFacilityProfile} />}

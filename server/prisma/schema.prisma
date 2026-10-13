@@ -231,6 +231,7 @@ model CollectionAssignment {
   status             AssignmentStatus  @default(ASSIGNED)
   assignedAt         DateTime          @default(now())
   acceptedAt         DateTime?
+  declinedAt         DateTime?
   unassignedAt       DateTime?
   reason             String?
   declineReasonCode  String?
@@ -563,6 +564,8 @@ enum FacilityOperationalStatus {
 enum CollectionStatus {
   PENDING
   WAITING_FOR_ADMIN
+  ACCEPTED
+  DECLINED
   SCHEDULED_MAINTENANCE
   COLLECTOR_ASSIGNED
   COLLECTOR_ON_THE_WAY

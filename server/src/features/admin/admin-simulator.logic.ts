@@ -1,14 +1,12 @@
 import { AccountStatus, ApprovalStatus, AssignmentStatus, CollectionStatus, CollectorAvailability, FacilityOperationalStatus, IncidentPriority, Prisma, ReportType, UserRole } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { ApiError } from "../../utils/api-error";
-import { dispatchWaitingCollections } from "../collections/collections.routes";
 import { calculateIncidentPriorityScore } from "../collections/citizen.logic";
 import { simulatorActionSchema } from "./admin.schemas";
 
 type SimulatorActionInput = ReturnType<typeof simulatorActionSchema.parse>;
 
 export async function performAdminSimulatorAction(adminId: string, input: SimulatorActionInput) {
-  let dispatchAfter = false;
   const result = await prisma.$transaction(async (transaction) => {
     const event = await transaction.adminSimulatorEvent.create({ data: { adminId, action: input.action } });
     const metadata: Record<string, string | number | boolean | null> = {};
@@ -124,7 +122,7 @@ export async function performAdminSimulatorAction(adminId: string, input: Simula
           if (!facility || !material) throw new ApiError(409, "SIMULATOR_REQUIRES_FACILITY", "Select an approved facility with an active material.");
           const requestedFor = new Date();
           const window = await transaction.facilityMaintenanceWindow.findFirst({ where: { facilityId: facility.id, status: { in: ["SCHEDULED", "ACTIVE"] }, startsAt: { lt: new Date(requestedFor.getTime() + 60 * 60 * 1000) }, endsAt: { gt: requestedFor } } });
-          const status = window ? CollectionStatus.SCHEDULED_MAINTENANCE : CollectionStatus.WAITING_FOR_ADMIN;
+          const status = window ? CollectionStatus.SCHEDULED_MAINTENANCE : CollectionStatus.PENDING;
           return {
             requesterId: recycler.id,
             materialId: material.materialId,
@@ -148,7 +146,6 @@ export async function performAdminSimulatorAction(adminId: string, input: Simula
       entityId = collection.id;
       metadata.facilityId = collection.destinationFacilityId;
       metadata.status = collection.status;
-      dispatchAfter = collection.status !== CollectionStatus.SCHEDULED_MAINTENANCE;
     } else if (["BIN_FULL", "ZONE_OVERFLOW", "FACILITY_STORAGE_FULL", "CREATE_COMMUNITY_REPORT", "CREATE_DUPLICATE_REPORT"].includes(input.action)) {
       const facility = await transaction.facility.findUnique({ where: { id: input.facilityId! }, select: { id: true, name: true, latitude: true, longitude: true } });
       if (!facility) throw new ApiError(404, "NOT_FOUND", "Facility was not found.");
@@ -239,24 +236,14 @@ export async function performAdminSimulatorAction(adminId: string, input: Simula
       entityType = "FACILITY_SENSOR";
       entityId = input.facilityId!;
       metadata.resetCount = reset.count;
-    } else if (["COMPLETE_COLLECTION", "RECORD_WEIGHT", "COLLECTOR_ACCEPT", "COLLECTOR_DECLINE", "DRIVE_COLLECTOR_TO_SITE"].includes(input.action)) {
+    } else if (["COMPLETE_COLLECTION", "RECORD_WEIGHT", "DRIVE_COLLECTOR_TO_SITE"].includes(input.action)) {
       const collection = await transaction.collectionRequest.findUnique({ where: { id: input.requestId! }, include: { assignments: { where: { status: { in: [AssignmentStatus.ASSIGNED, AssignmentStatus.ACCEPTED] } }, include: { collector: true }, orderBy: { assignedAt: "desc" }, take: 1 }, weight: true } });
       if (!collection) throw new ApiError(404, "NOT_FOUND", "Collection request was not found.");
       if (!collection.notes?.startsWith("[SIMULATOR:")) throw new ApiError(409, "REQUEST_NOT_SIMULATED", "Simulator workflow actions are limited to simulator-tagged collection requests.");
       const assignment = collection.assignments[0];
       if (!assignment) throw new ApiError(409, "NO_ACTIVE_ASSIGNMENT", "The request has no active collector assignment.");
       const now = new Date();
-      if (input.action === "COLLECTOR_ACCEPT") {
-        await transaction.collectionAssignment.update({ where: { id: assignment.id }, data: { status: AssignmentStatus.ACCEPTED, acceptedAt: assignment.acceptedAt ?? now } });
-        await transaction.collectionRequest.update({ where: { id: collection.id }, data: { status: CollectionStatus.COLLECTOR_ON_THE_WAY } });
-        await transaction.collectionStatusEvent.create({ data: { requestId: collection.id, actorId: adminId, fromStatus: collection.status, toStatus: CollectionStatus.COLLECTOR_ON_THE_WAY, note: "Simulator: collector accepted the assignment." } });
-      } else if (input.action === "COLLECTOR_DECLINE") {
-        await transaction.collectionAssignment.update({ where: { id: assignment.id }, data: { status: AssignmentStatus.DECLINED, unassignedAt: now, reason: "Simulator: collector declined the assignment." } });
-        await transaction.collectorProfile.update({ where: { id: assignment.collector.id }, data: { availability: CollectorAvailability.AVAILABLE } });
-        await transaction.collectionRequest.update({ where: { id: collection.id }, data: { status: CollectionStatus.WAITING_FOR_ADMIN } });
-        await transaction.collectionStatusEvent.create({ data: { requestId: collection.id, actorId: adminId, fromStatus: collection.status, toStatus: CollectionStatus.WAITING_FOR_ADMIN, note: "Simulator: collector declined; request returned to dispatch." } });
-        dispatchAfter = true;
-      } else if (input.action === "DRIVE_COLLECTOR_TO_SITE") {
+      if (input.action === "DRIVE_COLLECTOR_TO_SITE") {
         await transaction.collectorProfile.update({ where: { id: assignment.collector.id }, data: { currentLatitude: collection.pickupLatitude, currentLongitude: collection.pickupLongitude, lastLocationUpdatedAt: now } });
         metadata.previousLatitude = assignment.collector.currentLatitude;
         metadata.previousLongitude = assignment.collector.currentLongitude;
@@ -302,6 +289,5 @@ export async function performAdminSimulatorAction(adminId: string, input: Simula
     return { ...event, entityType, entityId, metadata };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
-  if (dispatchAfter) await dispatchWaitingCollections();
   return result;
 }

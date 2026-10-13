@@ -61,7 +61,7 @@ export const simulatorActionSchema = z.object({
   action: z.enum([
     "INDIVIDUAL_PICKUP_REQUEST", "BIN_FULL", "COMPLETE_COLLECTION", "RECORD_WEIGHT",
     "ZONE_OVERFLOW", "FACILITY_STORAGE_FULL", "CREATE_COMMUNITY_REPORT", "CREATE_DUPLICATE_REPORT",
-    "COLLECTOR_OFFLINE", "COLLECTOR_ACCEPT", "COLLECTOR_DECLINE", "DRIVE_COLLECTOR_TO_SITE",
+    "COLLECTOR_OFFLINE", "DRIVE_COLLECTOR_TO_SITE",
     "FACILITY_FULL", "FACILITY_MAINTENANCE", "FACILITY_RECOVERED", "START_SERVICE_PAUSE", "ENABLE_OVERRUN",
     "TRIGGER_SENSOR_SPIKE", "RESET_SENSOR", "SEED_DEMO_DATA", "RESET_SIMULATION",
   ]),
@@ -73,7 +73,7 @@ export const simulatorActionSchema = z.object({
   gracePeriodMinutes: z.number().int().min(0).max(1440).optional(),
   actualKg: z.number().positive().max(100000).optional(),
 }).strict().superRefine((input, context) => {
-  const requestActions = ["COMPLETE_COLLECTION", "RECORD_WEIGHT", "COLLECTOR_ACCEPT", "COLLECTOR_DECLINE", "DRIVE_COLLECTOR_TO_SITE"];
+  const requestActions = ["COMPLETE_COLLECTION", "RECORD_WEIGHT", "DRIVE_COLLECTOR_TO_SITE"];
   const facilityActions = ["INDIVIDUAL_PICKUP_REQUEST", "BIN_FULL", "ZONE_OVERFLOW", "FACILITY_STORAGE_FULL", "CREATE_COMMUNITY_REPORT", "CREATE_DUPLICATE_REPORT", "FACILITY_FULL", "FACILITY_MAINTENANCE", "FACILITY_RECOVERED", "START_SERVICE_PAUSE", "ENABLE_OVERRUN", "TRIGGER_SENSOR_SPIKE", "RESET_SENSOR"];
   if (requestActions.includes(input.action) && !input.requestId) context.addIssue({ code: "custom", message: "Select a collection request.", path: ["requestId"] });
   if (facilityActions.includes(input.action) && !input.facilityId) context.addIssue({ code: "custom", message: "Select a facility.", path: ["facilityId"] });

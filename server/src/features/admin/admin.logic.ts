@@ -27,6 +27,15 @@ export type RankedCollectorCandidate = CollectorCandidateInput & {
   locationSource: "CURRENT" | "SERVICE_CENTER";
 };
 
+export type AdminAssignmentCandidate = Pick<CollectorCandidateInput, "profileId" | "userId" | "displayName" | "email" | "activeWorkload">;
+
+export function adminAssignmentCandidates(collectors: CollectorCandidateInput[]): AdminAssignmentCandidate[] {
+  return collectors
+    .filter((collector) => collector.accountStatus === "ACTIVE" && collector.approvalStatus === "APPROVED" && collector.availability === "AVAILABLE")
+    .sort((left, right) => left.activeWorkload - right.activeWorkload || (left.displayName ?? left.email).localeCompare(right.displayName ?? right.email))
+    .map(({ profileId, userId, displayName, email, activeWorkload }) => ({ profileId, userId, displayName, email, activeWorkload }));
+}
+
 export type CollectorCandidateRequirements = {
   requiredMaterialId?: string;
   now?: Date;

@@ -49,10 +49,11 @@ test("verified quantities must be positive", () => {
   assert.equal(verifiedWeightSchema.safeParse({ verifiedKg: 0 }).success, false);
 });
 
-test("collector decline requires a supported reason code", () => {
-  assert.equal(collectorDeclineSchema.safeParse({ reasonCode: "VEHICLE_FULL" }).success, true);
-  assert.equal(collectorDeclineSchema.safeParse({ reasonCode: "OTHER", explanation: "  " }).success, false);
-  assert.equal(collectorDeclineSchema.safeParse({ reason: "Vehicle unavailable" }).success, false);
+test("collector decline requires a non-whitespace reason", () => {
+  assert.equal(collectorDeclineSchema.safeParse({ reason: "Vehicle unavailable" }).success, true);
+  assert.equal(collectorDeclineSchema.safeParse({ reason: "  Vehicle unavailable  " }).success, true);
+  assert.equal(collectorDeclineSchema.safeParse({ reason: "   " }).success, false);
+  assert.equal(collectorDeclineSchema.safeParse({}).success, false);
 });
 
 test("electricity redemptions require points and a valid meter number", () => {
@@ -91,6 +92,7 @@ test("hazard reports require location and cannot set priority", () => {
 });
 
 test("collector progress accepts only supported transition actions", () => {
+  assert.equal(collectorProgressSchema.safeParse({ action: "START_TRAVEL" }).success, true);
   assert.equal(collectorProgressSchema.safeParse({ action: "ARRIVED" }).success, true);
   assert.equal(collectorProgressSchema.safeParse({ action: "PAUSE", delayCode: "SAFETY_ISSUE" }).success, true);
   assert.equal(collectorProgressSchema.safeParse({ action: "PAUSE" }).success, false);

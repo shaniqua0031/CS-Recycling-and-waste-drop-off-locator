@@ -50,12 +50,11 @@ export const collectedWeightSchema = z.object({
 });
 
 export const collectorDeclineSchema = z.object({
-  reasonCode: z.enum(["VEHICLE_FULL", "TOO_FAR", "UNAVAILABLE", "MATERIAL_UNSUPPORTED", "SAFETY_ISSUE", "OTHER"]),
-  explanation: z.string().trim().min(1).max(500).optional(),
+  reason: z.string().trim().min(1).max(500),
 }).strict();
 
 export const collectorProgressSchema = z.object({
-  action: z.enum(["ARRIVED", "START", "PAUSE", "RESUME"]),
+  action: z.enum(["START_TRAVEL", "ARRIVED", "START", "PAUSE", "RESUME"]),
   delayCode: z.enum(["VEHICLE_PROBLEM", "SAFETY_ISSUE", "SORTING_DELAY", "CUSTOMER_DELAY", "OTHER"]).optional(),
   explanation: z.string().trim().min(1).max(500).optional(),
 }).strict().superRefine((input, context) => {

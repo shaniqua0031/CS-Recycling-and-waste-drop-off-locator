@@ -1,4 +1,4 @@
-export type WorkflowCollectionStatus = "Pending" | "Assigned" | "On the way" | "Arrived" | "Collecting" | "Paused" | "Collected" | "Verified" | "Cancelled" | "Rejected";
+export type WorkflowCollectionStatus = "Pending" | "Accepted" | "Declined" | "Assigned" | "On the way" | "Arrived" | "Collecting" | "Paused" | "Collected" | "Verified" | "Cancelled" | "Rejected";
 
 export function toWorkflowStatus(apiStatus: string): WorkflowCollectionStatus {
   switch (apiStatus) {
@@ -16,6 +16,10 @@ export function toWorkflowStatus(apiStatus: string): WorkflowCollectionStatus {
     case "COLLECTED":
     case "VERIFICATION_PENDING":
       return "Collected";
+    case "ACCEPTED":
+      return "Accepted";
+    case "DECLINED":
+      return "Declined";
     case "WAITING_FOR_ADMIN":
     case "PENDING":
       return "Pending";

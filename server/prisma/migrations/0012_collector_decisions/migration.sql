@@ -1,0 +1,5 @@
+ALTER TYPE "CollectionStatus" ADD VALUE IF NOT EXISTS 'ACCEPTED';
+ALTER TYPE "CollectionStatus" ADD VALUE IF NOT EXISTS 'DECLINED';
+
+ALTER TABLE "CollectionAssignment"
+ADD COLUMN "declinedAt" TIMESTAMP(3);

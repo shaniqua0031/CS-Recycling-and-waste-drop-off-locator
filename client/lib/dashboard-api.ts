@@ -3,6 +3,8 @@ import { apiRequest } from "./auth-api";
 export type ApiCollectionStatus =
   | "PENDING"
   | "WAITING_FOR_ADMIN"
+  | "ACCEPTED"
+  | "DECLINED"
   | "SCHEDULED_MAINTENANCE"
   | "COLLECTOR_ASSIGNED"
   | "COLLECTOR_ON_THE_WAY"
@@ -33,7 +35,7 @@ export type CollectionRecord = {
   priority?: CollectionPriority;
   createdAt: string;
   status: ApiCollectionStatus;
-  requester?: { email: string; recyclerProfile?: { displayName: string } | null };
+  requester?: { email?: string; recyclerProfile?: { displayName: string } | null };
   material: { id: string; name: string };
   destinationFacility?: { id: string; name: string; address: string } | null;
   assignments: Array<{
@@ -43,6 +45,7 @@ export type CollectionRecord = {
     declineReasonCode?: string | null;
     assignedAt?: string;
     acceptedAt?: string | null;
+    declinedAt?: string | null;
     unassignedAt?: string | null;
     collector: {
       currentLatitude: number | null;
@@ -71,6 +74,7 @@ export type CollectorDashboard = {
     currentLongitude: number | null;
   };
   materials: Array<{ id: string; name: string }>;
+  availableRequests: CollectionRecord[];
   requests: CollectionRecord[];
   performance: {
     completedCollections: number;
@@ -371,6 +375,14 @@ export type CollectorCandidate = {
   activeWorkload: number;
 };
 
+export type AdminAssignmentCandidate = {
+  profileId: string;
+  userId: string;
+  displayName: string | null;
+  email: string;
+  activeWorkload: number;
+};
+
 export type MaterialRate = {
   id: string;
   name: string;
@@ -530,11 +542,11 @@ export function acceptCollection(requestId: string) {
   return apiRequest<CollectionRecord>(`/collections/${encodeURIComponent(requestId)}/accept`, { method: "POST" });
 }
 
-export function declineCollection(requestId: string, reasonCode: string, explanation?: string) {
-  return apiRequest<CollectionRecord>(`/collections/${encodeURIComponent(requestId)}/decline`, { method: "POST", body: JSON.stringify({ reasonCode, ...(explanation ? { explanation } : {}) }) });
+export function declineCollection(requestId: string, reason: string) {
+  return apiRequest<CollectionRecord>(`/collections/${encodeURIComponent(requestId)}/decline`, { method: "POST", body: JSON.stringify({ reason }) });
 }
 
-export function updateCollectionProgress(requestId: string, action: "ARRIVED" | "START" | "PAUSE" | "RESUME", details?: { delayCode?: string; explanation?: string }) {
+export function updateCollectionProgress(requestId: string, action: "START_TRAVEL" | "ARRIVED" | "START" | "PAUSE" | "RESUME", details?: { delayCode?: string; explanation?: string }) {
   return apiRequest<CollectionRecord>(`/collections/${encodeURIComponent(requestId)}/progress`, { method: "POST", body: JSON.stringify({ action, ...details }) });
 }
 
@@ -647,7 +659,7 @@ export function getAdminRequests(status?: string) {
   return apiRequest<CollectionRecord[]>(`/admin/requests${status ? `?status=${encodeURIComponent(status)}` : ""}`);
 }
 export function getCollectorCandidates(requestId: string) {
-  return apiRequest<CollectorCandidate[]>(`/admin/requests/${encodeURIComponent(requestId)}/candidates`);
+  return apiRequest<AdminAssignmentCandidate[]>(`/admin/requests/${encodeURIComponent(requestId)}/candidates`);
 }
 export function assignCollector(requestId: string, collectorProfileId: string) {
   return apiRequest<CollectionRecord>(`/admin/requests/${encodeURIComponent(requestId)}/assign`, { method: "POST", body: JSON.stringify({ collectorProfileId }) });

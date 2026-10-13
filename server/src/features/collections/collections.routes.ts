@@ -82,6 +82,25 @@ function requireNotificationOwner(request: Request) {
   return request.auth!.userId;
 }
 
+export function requestIsVisibleToCollector(
+  requestStatus: CollectionStatus,
+  collectorProfileId: string,
+  assignments: Array<{ collectorProfileId: string; status: AssignmentStatus }>,
+): boolean {
+  if (requestStatus !== CollectionStatus.PENDING && requestStatus !== CollectionStatus.WAITING_FOR_ADMIN) return false;
+  if (assignments.some((assignment) => assignment.status === AssignmentStatus.ACCEPTED || assignment.status === AssignmentStatus.ASSIGNED)) return false;
+  if (assignments.some((assignment) => assignment.collectorProfileId === collectorProfileId && assignment.status === AssignmentStatus.DECLINED)) return false;
+  return true;
+}
+
+export function collectorHasResponded(
+  collectorProfileId: string,
+  assignments: Array<{ collectorProfileId: string; status: AssignmentStatus }>,
+): boolean {
+  const respondedStatuses: AssignmentStatus[] = [AssignmentStatus.ASSIGNED, AssignmentStatus.ACCEPTED, AssignmentStatus.DECLINED];
+  return assignments.some((assignment) => assignment.collectorProfileId === collectorProfileId && respondedStatuses.includes(assignment.status));
+}
+
 function currentFacilityOpen(hours: Array<{ dayOfWeek: number; opensAt: string | null; closesAt: string | null; isClosed: boolean }>) {
   const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Johannesburg", weekday: "long", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date());
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
@@ -92,7 +111,7 @@ function currentFacilityOpen(hours: Array<{ dayOfWeek: number; opensAt: string |
   return Boolean(today && !today.isClosed && today.opensAt && today.closesAt && currentTime >= today.opensAt && currentTime < today.closesAt);
 }
 
-function requestInclude(includeCompletedAssignments = false, collectorUserId?: string) {
+function requestInclude(includeCompletedAssignments = false, collectorUserId?: string, includeDeclinedAssignments = false) {
   return {
     requester: { include: { recyclerProfile: true } },
     material: true,
@@ -100,7 +119,7 @@ function requestInclude(includeCompletedAssignments = false, collectorUserId?: s
     assignments: {
       where: collectorUserId
         ? { collector: { userId: collectorUserId } }
-        : { status: { in: includeCompletedAssignments ? [...activeAssignmentStatuses, AssignmentStatus.COMPLETED] : activeAssignmentStatuses } },
+        : { status: { in: [...activeAssignmentStatuses, ...(includeCompletedAssignments ? [AssignmentStatus.COMPLETED] : []), ...(includeDeclinedAssignments ? [AssignmentStatus.DECLINED] : [])] } },
       include: { collector: { include: { user: { include: { recyclerProfile: true } } } } },
       orderBy: { assignedAt: "desc" as const },
     },
@@ -236,7 +255,7 @@ collectionsRouter.get("/collector/dashboard", asyncHandler(async (request, respo
     include: { user: { include: { recyclerProfile: true } } },
   });
   if (!profile) throw new ApiError(404, "COLLECTOR_PROFILE_NOT_FOUND", "No collector profile is linked to this account.");
-  const [assignments, materials, notifications] = await Promise.all([
+  const [assignments, materials, notifications, availableRequests] = await Promise.all([
     prisma.collectionAssignment.findMany({
       where: { collectorProfileId: profile.id },
       include: {
@@ -256,7 +275,31 @@ collectionsRouter.get("/collector/dashboard", asyncHandler(async (request, respo
     }),
     prisma.material.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.notification.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 20 }),
+    profile.approvalStatus === ApprovalStatus.APPROVED && profile.user.status === AccountStatus.ACTIVE
+      ? prisma.collectionRequest.findMany({
+        where: {
+          status: { in: [CollectionStatus.PENDING, CollectionStatus.WAITING_FOR_ADMIN] },
+        },
+        include: {
+          requester: { select: { recyclerProfile: { select: { displayName: true } } } },
+          material: true,
+          destinationFacility: true,
+          assignments: { where: { status: { in: activeAssignmentStatuses } }, include: { collector: { include: { user: { include: { recyclerProfile: true } } } } } },
+          statusEvents: { orderBy: { createdAt: "asc" } },
+          weight: true,
+          materialWeights: { include: { material: true }, orderBy: { recordedAt: "asc" } },
+        },
+        orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+        take: 100,
+      })
+      : Promise.resolve([]),
   ]);
+
+  const visibleAvailableRequests = availableRequests.filter((item) => requestIsVisibleToCollector(
+    item.status,
+    profile.id,
+    item.assignments.map((assignment) => ({ collectorProfileId: assignment.collectorProfileId, status: assignment.status })),
+  ));
 
   const hasRecentCollectorLocation = profile.lastLocationUpdatedAt !== null
     && Date.now() - profile.lastLocationUpdatedAt.getTime() <= 30 * 60 * 1000
@@ -304,6 +347,7 @@ collectionsRouter.get("/collector/dashboard", asyncHandler(async (request, respo
   });
   const average = (values: number[]) => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
   const activeStatuses = new Set<CollectionStatus>([
+    CollectionStatus.ACCEPTED,
     CollectionStatus.COLLECTOR_ASSIGNED,
     CollectionStatus.COLLECTOR_ON_THE_WAY,
     CollectionStatus.COLLECTOR_ARRIVED,
@@ -320,6 +364,7 @@ collectionsRouter.get("/collector/dashboard", asyncHandler(async (request, respo
       currentLongitude: profile.currentLongitude,
     },
     materials,
+    availableRequests: visibleAvailableRequests,
     requests: history,
     performance: {
       completedCollections: completedAssignments.length,
@@ -369,7 +414,6 @@ collectionsRouter.put("/collector/profile", validateBody(collectorAvailabilitySc
   if ((updated.availability === CollectorAvailability.OFFLINE || updated.availability === CollectorAvailability.UNAVAILABLE) && profile.availability !== updated.availability) {
     await notifyAdmins("COLLECTOR_REGISTRATION", "Collector unavailable", `${request.auth!.displayName ?? request.auth!.email} is now ${updated.availability.toLowerCase().replaceAll("_", " ")}.`);
   }
-  if (updated.availability === CollectorAvailability.AVAILABLE) await dispatchWaitingCollections();
   response.json({ data: updated });
 }));
 
@@ -865,7 +909,7 @@ collectionsRouter.get("/", asyncHandler(async (request, response) => {
 
   const requests = await prisma.collectionRequest.findMany({
     where,
-    include: requestInclude(role === UserRole.COLLECTOR, role === UserRole.COLLECTOR ? userId : undefined),
+    include: requestInclude(role === UserRole.COLLECTOR, role === UserRole.COLLECTOR ? userId : undefined, role === UserRole.RECYCLER),
     orderBy: { createdAt: "desc" },
     take: 200,
   });
@@ -966,7 +1010,7 @@ collectionsRouter.post("/", validateBody(collectionRequestSchema), asyncHandler(
       },
       orderBy: { startsAt: "asc" },
     });
-    const initialStatus = maintenanceWindow ? CollectionStatus.SCHEDULED_MAINTENANCE : CollectionStatus.WAITING_FOR_ADMIN;
+    const initialStatus = maintenanceWindow ? CollectionStatus.SCHEDULED_MAINTENANCE : CollectionStatus.PENDING;
     const collectionRequest = await transaction.collectionRequest.create({
       data: {
         requesterId: request.auth!.userId,
@@ -998,7 +1042,7 @@ collectionsRouter.post("/", validateBody(collectionRequestSchema), asyncHandler(
       userId: request.auth!.userId,
       type: "COLLECTION_REQUEST_CREATED",
       title: "Collection request submitted",
-      body: created.hasMaintenanceWindow ? "Your request is scheduled around a facility maintenance window and will not be dispatched until service resumes." : "Your request is being matched with a qualified available collector.",
+      body: created.hasMaintenanceWindow ? "Your request is scheduled around a facility maintenance window and will enter the collector queue when service resumes." : "Your request is pending a collector's decision.",
       metadata: { requestId: created.id },
       },
       ...admins.map(({ id }): Prisma.NotificationCreateManyInput => ({
@@ -1012,13 +1056,6 @@ collectionsRouter.post("/", validateBody(collectionRequestSchema), asyncHandler(
     await prisma.notification.createMany({ data: notifications });
   } catch (error) {
     console.error("Collection request was saved, but notifications could not be created.", error);
-  }
-  if (created.status !== CollectionStatus.SCHEDULED_MAINTENANCE) {
-    try {
-      await dispatchWaitingCollections();
-    } catch (error) {
-      console.error("Collection request was saved, but automatic dispatch failed.", error);
-    }
   }
   const assigned = await prisma.collectionRequest.findUnique({ where: { id: created.id }, include: requestInclude() });
   response.status(201).json({ data: assigned ?? created });
@@ -1141,73 +1178,54 @@ collectionsRouter.post("/:requestId/cancel", validateBody(collectionCancellation
     return transaction.collectionRequest.findUniqueOrThrow({ where: { id: requestId }, include: requestInclude() });
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
-  await dispatchWaitingCollections();
   response.json({ data: cancelled });
 }));
 
 collectionsRouter.post("/:requestId/accept", asyncHandler(async (request, response) => {
-  if (request.auth!.role !== UserRole.COLLECTOR) throw new ApiError(403, "FORBIDDEN", "Only the assigned Collector can accept a collection.");
+  if (request.auth!.role !== UserRole.COLLECTOR) throw new ApiError(403, "FORBIDDEN", "Only an authenticated Collector can accept a collection.");
   const requestId = pathParam(request, "requestId");
-  const profile = await prisma.collectorProfile.findUnique({ where: { userId: request.auth!.userId } });
-  if (!profile || profile.approvalStatus !== ApprovalStatus.APPROVED) throw new ApiError(403, "COLLECTOR_NOT_APPROVED", "Your collector account is not approved.");
+  const profile = await prisma.collectorProfile.findUnique({ where: { userId: request.auth!.userId, approvalStatus: ApprovalStatus.APPROVED }, include: { user: { select: { status: true } } } });
+  if (!profile || profile.user.status !== AccountStatus.ACTIVE) throw new ApiError(403, "COLLECTOR_NOT_APPROVED", "Your active collector account must be approved before accepting requests.");
 
   const collectionRequest = await prisma.$transaction(async (transaction) => {
-    const assignment = await transaction.collectionAssignment.findFirst({
-      where: { requestId, collectorProfileId: profile.id, status: AssignmentStatus.ASSIGNED },
-      include: { request: { include: { destinationFacility: { include: { memberships: { select: { userId: true } } } } } } },
+    const current = await transaction.collectionRequest.findUnique({
+      where: { id: requestId },
+      include: { assignments: { where: { collectorProfileId: profile.id }, orderBy: { assignedAt: "desc" } } },
     });
-    if (!assignment || assignment.request.status !== CollectionStatus.COLLECTOR_ASSIGNED) throw new ApiError(409, "ASSIGNMENT_NOT_AVAILABLE", "This request is not assigned to you or has already changed.");
-    const requestChanged = await transaction.collectionRequest.updateMany({
-      where: { id: requestId, status: CollectionStatus.COLLECTOR_ASSIGNED },
-      data: { status: CollectionStatus.COLLECTOR_ON_THE_WAY },
+    if (!current || !requestIsVisibleToCollector(current.status, profile.id, current.assignments.map((assignment) => ({ collectorProfileId: assignment.collectorProfileId, status: assignment.status })))) {
+      throw new ApiError(409, "REQUEST_NOT_AVAILABLE", "This request is no longer pending a collector decision.");
+    }
+    if (collectorHasResponded(profile.id, current.assignments.map((assignment) => ({ collectorProfileId: assignment.collectorProfileId, status: assignment.status })))) {
+      throw new ApiError(409, "REQUEST_ALREADY_RESPONDED", "You already responded to this collection request.");
+    }
+    const decidedAt = new Date();
+    const requestChanged = await transaction.collectionRequest.updateMany({ where: { id: requestId, status: current.status }, data: { status: CollectionStatus.ACCEPTED } });
+    if (requestChanged.count !== 1) throw new ApiError(409, "REQUEST_NOT_AVAILABLE", "Another collector has already decided this request.");
+    await transaction.collectionAssignment.create({
+      data: { requestId, collectorProfileId: profile.id, status: AssignmentStatus.ACCEPTED, acceptedAt: decidedAt },
     });
-    if (requestChanged.count !== 1) throw new ApiError(409, "ASSIGNMENT_NOT_AVAILABLE", "This request has already changed.");
-    const assignmentChanged = await transaction.collectionAssignment.updateMany({
-      where: { id: assignment.id, status: AssignmentStatus.ASSIGNED },
-      data: { status: AssignmentStatus.ACCEPTED, acceptedAt: new Date() },
-    });
-    if (assignmentChanged.count !== 1) throw new ApiError(409, "ASSIGNMENT_NOT_AVAILABLE", "This assignment has already changed.");
+    await transaction.collectorProfile.update({ where: { id: profile.id }, data: { availability: CollectorAvailability.ON_COLLECTION } });
     await transaction.collectionStatusEvent.create({ data: {
       requestId,
       actorId: request.auth!.userId,
-      fromStatus: CollectionStatus.COLLECTOR_ASSIGNED,
-      toStatus: CollectionStatus.COLLECTOR_ON_THE_WAY,
-      note: "Collector accepted the assignment.",
+      fromStatus: current.status,
+      toStatus: CollectionStatus.ACCEPTED,
+      note: "Collector accepted the request.",
     } });
     await transaction.notification.create({ data: {
-      userId: assignment.request.requesterId,
-      type: "COLLECTOR_ON_THE_WAY",
-      title: "Collector accepted",
-      body: `${request.auth!.displayName ?? "Your collector"} is on the way.`,
+      userId: current.requesterId,
+      type: "COLLECTOR_ASSIGNED",
+      title: "Collection request accepted",
+      body: `${request.auth!.displayName ?? "A collector"} accepted your collection request.`,
       metadata: { requestId },
     } });
-    const facilityMembers = assignment.request.destinationFacility?.memberships ?? [];
-    if (facilityMembers.length) await transaction.notification.createMany({ data: facilityMembers.map(({ userId: memberId }) => ({
-      userId: memberId,
-      facilityId: assignment.request.destinationFacility!.id,
-      type: "COLLECTOR_ON_THE_WAY",
-      title: "Collector approaching",
-      body: "An assigned collector has accepted the delivery and is on the way.",
-      metadata: { requestId },
-    })) });
-    await transaction.notification.create({ data: {
-      userId: request.auth!.userId,
-      type: "COLLECTION_REASSIGNED",
-      title: "Job returned to the queue",
-      body: "The collection is being offered to the next qualified available collector.",
-      metadata: { requestId },
-    } });
-    const admins = await transaction.user.findMany({ where: { role: UserRole.ADMIN, status: AccountStatus.ACTIVE }, select: { id: true } });
-    if (admins.length) await transaction.notification.createMany({ data: admins.map(({ id }) => ({
-      userId: id,
-      type: "COLLECTOR_ON_THE_WAY",
-      title: "Collector accepted a job",
-      body: `A collector accepted request ${requestId.slice(-8)}.`,
-      metadata: { requestId },
-    })) });
-    return transaction.collectionRequest.findUniqueOrThrow({ where: { id: requestId }, include: requestInclude() });
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-  response.json({ data: collectionRequest });
+    return requestId;
+  }, { timeout: 15_000 });
+  const acceptedRequest = await prisma.collectionRequest.findUniqueOrThrow({
+    where: { id: collectionRequest },
+    include: requestInclude(),
+  });
+  response.json({ data: acceptedRequest });
 }));
 
 collectionsRouter.post("/:requestId/progress", validateBody(collectorProgressSchema), asyncHandler(async (request, response) => {
@@ -1223,6 +1241,7 @@ collectionsRouter.post("/:requestId/progress", validateBody(collectorProgressSch
     });
     if (!assignment) throw new ApiError(409, "ASSIGNMENT_NOT_ACTIVE", "There is no active assignment for this collector.");
     const transitions = {
+      START_TRAVEL: { from: CollectionStatus.ACCEPTED, to: CollectionStatus.COLLECTOR_ON_THE_WAY, type: "COLLECTOR_ON_THE_WAY" as const, title: "Collector on the way", body: "Your collector has started travelling to the pickup address." },
       ARRIVED: { from: CollectionStatus.COLLECTOR_ON_THE_WAY, to: CollectionStatus.COLLECTOR_ARRIVED, type: "COLLECTOR_ARRIVED" as const, title: "Collector arrived", body: "Your collector has arrived at the pickup address." },
       START: { from: CollectionStatus.COLLECTOR_ARRIVED, to: CollectionStatus.COLLECTING, type: "COLLECTION_STARTED" as const, title: "Collection started", body: "Your collection has started." },
       PAUSE: { from: CollectionStatus.COLLECTING, to: CollectionStatus.PAUSED, type: "COLLECTION_PAUSED" as const, title: "Collection paused", body: "Your collection is temporarily paused." },
@@ -1246,67 +1265,40 @@ collectionsRouter.post("/:requestId/progress", validateBody(collectorProgressSch
         metadata: { requestId },
       })) });
     }
-    return transaction.collectionRequest.findUniqueOrThrow({ where: { id: requestId }, include: requestInclude() });
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-  response.json({ data: collectionRequest });
+    return requestId;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
+  const updatedRequest = await prisma.collectionRequest.findUniqueOrThrow({
+    where: { id: collectionRequest },
+    include: requestInclude(),
+  });
+  response.json({ data: updatedRequest });
 }));
 
 collectionsRouter.post("/:requestId/decline", validateBody(collectorDeclineSchema), asyncHandler(async (request, response) => {
-  if (request.auth!.role !== UserRole.COLLECTOR) throw new ApiError(403, "FORBIDDEN", "Only the assigned Collector can decline a collection.");
+  if (request.auth!.role !== UserRole.COLLECTOR) throw new ApiError(403, "FORBIDDEN", "Only an authenticated Collector can decline a collection.");
   const requestId = pathParam(request, "requestId");
-  const { reasonCode, explanation } = collectorDeclineSchema.parse(request.body);
-  const reason = explanation ? `${reasonCode}: ${explanation}` : reasonCode;
-  const profile = await prisma.collectorProfile.findUnique({ where: { userId: request.auth!.userId } });
-  if (!profile || profile.approvalStatus !== ApprovalStatus.APPROVED) throw new ApiError(403, "COLLECTOR_NOT_APPROVED", "Your collector account is not approved.");
+  const { reason } = collectorDeclineSchema.parse(request.body);
+  const profile = await prisma.collectorProfile.findUnique({ where: { userId: request.auth!.userId, approvalStatus: ApprovalStatus.APPROVED }, include: { user: { select: { status: true } } } });
+  if (!profile || profile.user.status !== AccountStatus.ACTIVE) throw new ApiError(403, "COLLECTOR_NOT_APPROVED", "Your active collector account must be approved before declining requests.");
 
   const collectionRequest = await prisma.$transaction(async (transaction) => {
-    const assignment = await transaction.collectionAssignment.findFirst({
-      where: { requestId, collectorProfileId: profile.id, status: AssignmentStatus.ASSIGNED },
-      include: { request: true },
+    const current = await transaction.collectionRequest.findUnique({
+      where: { id: requestId },
+      include: { assignments: { where: { collectorProfileId: profile.id }, orderBy: { assignedAt: "desc" } } },
     });
-    if (!assignment || assignment.request.status !== CollectionStatus.COLLECTOR_ASSIGNED) throw new ApiError(409, "ASSIGNMENT_NOT_AVAILABLE", "This request is not assigned to you or has already changed.");
-
-    const requestChanged = await transaction.collectionRequest.updateMany({
-      where: { id: requestId, status: CollectionStatus.COLLECTOR_ASSIGNED },
-      data: { status: CollectionStatus.WAITING_FOR_ADMIN },
+    if (!current || !requestIsVisibleToCollector(current.status, profile.id, current.assignments.map((assignment) => ({ collectorProfileId: assignment.collectorProfileId, status: assignment.status })))) {
+      throw new ApiError(409, "REQUEST_NOT_AVAILABLE", "This request is no longer pending a collector decision.");
+    }
+    if (collectorHasResponded(profile.id, current.assignments.map((assignment) => ({ collectorProfileId: assignment.collectorProfileId, status: assignment.status })))) {
+      throw new ApiError(409, "REQUEST_ALREADY_RESPONDED", "You already responded to this collection request.");
+    }
+    const decidedAt = new Date();
+    await transaction.collectionAssignment.create({
+      data: { requestId, collectorProfileId: profile.id, status: AssignmentStatus.DECLINED, reason, declineReasonCode: "OTHER", declinedAt: decidedAt },
     });
-    if (requestChanged.count !== 1) throw new ApiError(409, "ASSIGNMENT_NOT_AVAILABLE", "This request has already changed.");
-    const assignmentChanged = await transaction.collectionAssignment.updateMany({
-      where: { id: assignment.id, status: AssignmentStatus.ASSIGNED },
-      data: { status: AssignmentStatus.DECLINED, reason, declineReasonCode: reasonCode },
-    });
-    if (assignmentChanged.count !== 1) throw new ApiError(409, "ASSIGNMENT_NOT_AVAILABLE", "This assignment has already changed.");
-    await transaction.collectorProfile.updateMany({
-      where: { id: profile.id, availability: CollectorAvailability.ON_COLLECTION },
-      data: { availability: CollectorAvailability.AVAILABLE },
-    });
-    await transaction.collectionStatusEvent.create({ data: {
-      requestId,
-      actorId: request.auth!.userId,
-      fromStatus: CollectionStatus.COLLECTOR_ASSIGNED,
-      toStatus: CollectionStatus.WAITING_FOR_ADMIN,
-      note: `Collector declined the assignment: ${reason}`,
-    } });
-    await transaction.notification.create({ data: {
-      userId: assignment.request.requesterId,
-      type: "COLLECTOR_DECLINED",
-      title: "Collector declined assignment",
-      body: `The assigned Collector declined: ${reason} The request is being offered to another qualified collector.`,
-      metadata: { requestId },
-    } });
-    const admins = await transaction.user.findMany({ where: { role: UserRole.ADMIN, status: AccountStatus.ACTIVE }, select: { id: true } });
-    if (admins.length) await transaction.notification.createMany({ data: admins.map(({ id }) => ({
-      userId: id,
-      type: "COLLECTOR_DECLINED",
-      title: "Collection needs reassignment",
-      body: `A Collector declined request ${requestId.slice(-8)}. Reason: ${reason}`,
-      metadata: { requestId },
-    })) });
-    return transaction.collectionRequest.findUniqueOrThrow({ where: { id: requestId }, include: requestInclude() });
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-  await dispatchWaitingCollections();
-  const reassigned = await prisma.collectionRequest.findUnique({ where: { id: requestId }, include: requestInclude() });
-  response.json({ data: reassigned ?? collectionRequest });
+    return transaction.collectionRequest.findUniqueOrThrow({ where: { id: requestId }, include: requestInclude(true) });
+  });
+  response.json({ data: collectionRequest });
 }));
 
 collectionsRouter.post("/:requestId/collect", validateBody(collectedWeightSchema), asyncHandler(async (request, response) => {
