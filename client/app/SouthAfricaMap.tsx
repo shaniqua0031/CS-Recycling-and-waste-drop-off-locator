@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import L from "leaflet";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import type { Location } from "./locations";
+import { isInsideSouthAfrica, SOUTH_AFRICA_DEFAULT_CENTER, SOUTH_AFRICA_MAP_BOUNDS, SouthAfricaMapLayers } from "./south-africa-map-layers";
 
 const recyclingMarker = L.divIcon({
   className: "wastewise-marker",
@@ -17,7 +18,10 @@ function RecenterMap({ location }: { location: Location }) {
   const map = useMap();
 
   useEffect(() => {
-    map.flyTo([location.latitude, location.longitude], Math.max(map.getZoom(), 10), { duration: 0.5 });
+    const center = isInsideSouthAfrica(location.latitude, location.longitude)
+      ? [location.latitude, location.longitude] as [number, number]
+      : SOUTH_AFRICA_DEFAULT_CENTER;
+    map.flyTo(center, Math.max(map.getZoom(), 10), { duration: 0.5 });
   }, [location.latitude, location.longitude, map]);
 
   return null;
@@ -32,12 +36,18 @@ export default function SouthAfricaMap({
   selectedLocation: Location;
   onSelectLocation: (location: Location) => void;
 }) {
+  const center: [number, number] = isInsideSouthAfrica(selectedLocation.latitude, selectedLocation.longitude)
+    ? [selectedLocation.latitude, selectedLocation.longitude]
+    : SOUTH_AFRICA_DEFAULT_CENTER;
+
   return (
     <div className="h-[420px] w-full overflow-hidden rounded-xl">
       <MapContainer
-        center={[selectedLocation.latitude, selectedLocation.longitude]}
+        center={center}
         zoom={10}
-        minZoom={6}
+        minZoom={5}
+        maxBounds={SOUTH_AFRICA_MAP_BOUNDS}
+        maxBoundsViscosity={1}
         scrollWheelZoom={false}
         className="h-full w-full"
       >
@@ -45,8 +55,9 @@ export default function SouthAfricaMap({
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+        <SouthAfricaMapLayers />
         <RecenterMap location={selectedLocation} />
-        {locations.map((location) => (
+        {locations.filter((location) => isInsideSouthAfrica(location.latitude, location.longitude)).map((location) => (
           <Marker
             key={location.name}
             position={[location.latitude, location.longitude]}
